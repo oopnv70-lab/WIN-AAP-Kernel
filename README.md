@@ -14,30 +14,45 @@
 
 ## 源码来源
 
-- 荣耀官方开源源码包：`AAP-AN00_MagicOS11.0_Opensource.zip`（648 MB，zip → tar.gz 两层嵌套）
-- 构建工具链：Google ack（`common-android16-6.12`）
+- 荣耀官方开源源码包：`AAP-AN00_MagicOS11.0_Opensource.zip`（648 MB，多层嵌套压缩）
+- 构建工具链：AOSP kernel/common（`common-android16-6.12`）+ kernel/build（Kleaf）
 
 ## 构建方式
 
 在 CI 中拉取源码并构建，本地只维护配方。触发为**手动**（workflow_dispatch）。
 
 流程：
-1. aria2 多线程下载荣耀源码包（curl -L 兜底）
-2. 两层解压：zip → tar.gz → Code_Opensource/{kernel,external,vendor}
-3. repo 拉取 Google ack（common-android16-6.12）
-4. 荣耀 kernel 覆盖 ack common
-5. kleaf 构建纯 GKI 产物
+1. 清理磁盘空间
+2. 动态查询荣耀开源中心接口，获取当前有效下载链接（解决链接过期问题）
+3. aria2 多线程下载源码包（curl -L 兜底，带 Referer 防盗链）
+4. 递归展开多层嵌套压缩包
+5. repo 拉取 AOSP kernel（common-android16-6.12）
+6. 荣耀 kernel 覆盖 common
+7. kleaf 编译三个 target（Image / boot.img / system_dlkm）
+8. 打包 AnyKernel3 刷机包
 
 构建命令：
 ```
-tools/bazel run //common:kernel_aarch64_abi_dist --config=release
+tools/bazel build --config=fast \
+  //common:kernel_aarch64 \
+  //common:kernel_aarch64_gki_artifacts \
+  //common:kernel_aarch64_images
 ```
+
+## 产物
+
+- `AAP-AN00-GKI-AnyKernel3-*.zip` —— AnyKernel3 刷机包（含 Image）
+- `system_dlkm.ext4.img` / `system_dlkm.erofs.img` —— 自编 GKI 模块镜像
 
 ## 使用
 
-1. 在仓库 Secrets 中配置 `SRC_URL`（荣耀源码下载链接，可选，缺省使用内置链接）
-2. 到 Actions 页手动触发 `Build GKI (AAP-AN00)`
-3. 从 artifacts 下载 GKI 产物
+1. 到 Actions 页手动触发 `Build GKI (AAP-AN00)`
+2. 从 artifacts 下载 AnyKernel3 刷机包
+3. 用自定义 Recovery（如 TWRP）刷入，或解包后 fastboot 刷 boot
+
+## 许可证
+
+本工程产出物为 GPL-2.0 衍生作品，第三方组件许可证详见 [NOTICE.md](NOTICE.md)。
 
 ## 免责声明
 

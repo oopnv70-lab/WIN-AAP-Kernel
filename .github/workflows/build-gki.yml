@@ -10,6 +10,7 @@ concurrency:
 env:
   MODEL: AAP-AN00
   BRANCH: common-android16-6.12
+  KERNEL_PLATFORM: ${{ github.workspace }}/kp
 
 jobs:
   build:
@@ -57,7 +58,7 @@ jobs:
       - name: 同步 AOSP 内核基础工程
         run: |
           set -euxo pipefail
-          mkdir -p kp && cd kp
+          mkdir -p "$KERNEL_PLATFORM" && cd "$KERNEL_PLATFORM"
           git config --global user.name  "github-actions"
           git config --global user.email "github-actions@github.com"
           repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1 --no-repo-verify
@@ -68,29 +69,149 @@ jobs:
           set -euxo pipefail
           SRC="${GITHUB_WORKSPACE}/honor_src/Code_Opensource"
           test -d "${SRC}/kernel" || { echo "::error::找不到荣耀 kernel 目录"; exit 1; }
-          rsync -a --delete --exclude='.git' "${SRC}/kernel/" "${GITHUB_WORKSPACE}/kp/common/"
+          rsync -a --delete --exclude='.git' "${SRC}/kernel/" "${KERNEL_PLATFORM}/common/"
           echo "=== 覆盖后内核版本 ==="
-          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${GITHUB_WORKSPACE}/kp/common/Makefile"
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${KERNEL_PLATFORM}/common/Makefile"
 
-      - name: 构建 GKI 内核 (kleaf abi_dist)
+      - name: 编译 GKI 内核 (kleaf, 只编需要的 target)
         run: |
-          set -euxo pipefail
-          cd "${GITHUB_WORKSPACE}/kp"
-          tools/bazel run //common:kernel_aarch64_abi_dist --config=release
+          set -uo pipefail
+          cd "$KERNEL_PLATFORM"
+          LOG="$GITHUB_WORKSPACE/build.log"
+          ls -l tools/bazel || { echo "::error::缺少 tools/bazel"; exit 1; }
+          T0=$(date +%s)
+          # 三个 target：kernel_aarch64 -> Image; gki_artifacts -> boot.img; images -> system_dlkm
+          tools/bazel build --config=fast \
+            //common:kernel_aarch64 \
+            //common:kernel_aarch64_gki_artifacts \
+            //common:kernel_aarch64_images >>"$LOG" 2>&1 || {
+            echo "::error::GKI 编译失败"
+            grep -inE 'error|FAILED|fatal|Exception' "$LOG" | head -40
+            tail -60 "$LOG"
+            exit 1; }
+          T1=$(date +%s); echo "编译耗时 $((T1-T0))s"
+          tail -15 "$LOG"
 
-      - name: 收集构建产物
+      - name: 取出产物 (Image / boot.img / system_dlkm)
         run: |
-          set -euxo pipefail
-          mkdir -p dist
-          find kp -path '*kernel_aarch64*' \( -name 'Image' -o -name 'Image.gz' -o -name '*.img' \) -exec cp -v {} dist/ \; 2>/dev/null || true
-          find kp -name 'kernel_aarch64_gki_artifacts' -type d 2>/dev/null | while read d; do
-            cp -rv "$d" dist/ 2>/dev/null || true
+          set -uo pipefail
+          cd "$KERNEL_PLATFORM"
+          D="$GITHUB_WORKSPACE/dist"; mkdir -p "$D"
+          EXEC=$(tools/bazel info execution_root 2>/dev/null)
+          echo "execroot=$EXEC"
+          FILES=$(tools/bazel cquery --output=files \
+            //common:kernel_aarch64 \
+            //common:kernel_aarch64_gki_artifacts \
+            //common:kernel_aarch64_images 2>/dev/null || true)
+          echo '==== cquery 产物 ===='
+          printf '%s\n' "$FILES" | head -40
+          take() {
+            n="$1"; src=""
+            p=$(printf '%s\n' "$FILES" | grep -E "(^|/)$n\$" | head -1)
+            if [ -n "$p" ]; then
+              if [ -f "$p" ]; then src="$p"; else src="$EXEC/$p"; fi
+            fi
+            if [ ! -f "$src" ]; then
+              src=$(find "$EXEC" -maxdepth 9 -type f -name "$n" -path '*kernel_aarch64*' 2>/dev/null | head -1)
+            fi
+            if [ -n "$src" ] && [ -f "$src" ]; then cp -v "$src" "$D/$n"; return 0; fi
+            return 1
+          }
+          rc=0
+          take Image || { echo "::error::没有产出 Image（AnyKernel3 必须有它）"; rc=1; }
+          take boot.img || echo "::warning::没有 boot.img（仅备用）"
+          take system_dlkm.ext4.img || echo "::warning::没有 system_dlkm.ext4.img"
+          take system_dlkm.erofs.img || echo "::warning::没有 system_dlkm.erofs.img"
+          [ "$rc" -eq 0 ] || exit 1
+          # Image 头 magic 校验（aarch64 内核 magic 0x644d5241 @ 0x38）
+          MAGIC=$(od -An -tx4 -j 56 -N 4 "$D/Image" 2>/dev/null | tr -d ' \n')
+          echo "Image magic@0x38 = $MAGIC"
+          [ "$MAGIC" = "644d5241" ] || { echo "::error::Image 头 magic 不是 644d5241，产物不对"; exit 1; }
+          strings -a "$D/Image" 2>/dev/null | grep -m1 '^Linux version' || echo "::warning::Image 里没找到 Linux version 串"
+          ls -la "$D"
+
+      - name: 打包 AnyKernel3 刷机包
+        run: |
+          set -uo pipefail
+          cd "$GITHUB_WORKSPACE"
+          D="$GITHUB_WORKSPACE/dist"
+          test -f "$D/Image" || { echo "::error::dist/Image 不存在，无法打包"; exit 1; }
+          rm -rf ak3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 || {
+            echo "::error::克隆 AnyKernel3 失败"; exit 1; }
+          cd ak3
+          rm -rf .git .github patch ramdisk modules
+          test -f META-INF/com/google/android/update-binary || { echo "::error::AK3 模板缺 update-binary"; exit 1; }
+          test -f tools/ak3-core.sh || { echo "::error::AK3 模板缺 tools/ak3-core.sh"; exit 1; }
+          cat > anykernel.sh <<'AK3'
+          ### AnyKernel3 Ramdisk Mod Script
+          ### AAP-AN00 (HONOR WIN) - 自编译纯 GKI (android16-6.12 / 6.12.58)
+          ### 本机形态：A/B 槽；boot.img 为 header v4 且无 ramdisk（ramdisk 在 init_boot）。
+          ### 因此只做「拆 boot -> 换内核 -> 回写」，不碰 ramdisk、不碰 init_boot、不碰 recovery。
+          properties() { '
+          kernel.string=AAP-AN00 GKI 6.12.58 (self-built)
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=AAP-AN00
+          device.name2=
+          device.name3=
+          device.name4=
+          device.name5=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; } # end properties
+          SLOT_SELECT=active;
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+          . tools/ak3-core.sh;
+          case "$SLOT" in
+            _a|_b) : ;;
+            *) abort "活动槽异常（SLOT='$SLOT'），拒绝刷写。";;
+          esac
+          [ -n "$BLOCK" ] || abort "未能确定目标分区，拒绝刷写。"
+          ui_print "  活动槽：$SLOT"
+          ui_print "  目标分区：$BLOCK"
+          split_boot;
+          flash_boot;
+          AK3
+
+          cp "$D/Image" ./Image
+          chmod +x tools/* 2>/dev/null || true
+          cp -v "$GITHUB_WORKSPACE/LICENSE" ./LICENSE 2>/dev/null || true
+          cp -v "$GITHUB_WORKSPACE/NOTICE.md" ./NOTICE.md 2>/dev/null || true
+          mkdir -p ./LICENSES
+          cp -v "$GITHUB_WORKSPACE"/LICENSES/*.txt ./LICENSES/ 2>/dev/null || true
+          echo '==== 包内根目录 ===='
+          ls -l anykernel.sh Image
+          bash -n anykernel.sh || { echo "::error::anykernel.sh 语法错误"; exit 1; }
+          for chk in 'SLOT_SELECT=active;' 'BLOCK=boot;' 'IS_SLOT_DEVICE=1;' 'PATCH_VBMETA_FLAG=auto;'; do
+            grep -qF "$chk" anykernel.sh || { echo "::error::anykernel.sh 缺约束：$chk"; exit 1; }
           done
-          ls -laR dist/ | head -100
+          grep -qF 'split_boot;' anykernel.sh && grep -qF 'flash_boot;' anykernel.sh \
+            || { echo "::error::anykernel.sh 缺 split_boot/flash_boot"; exit 1; }
+          ZIP="$D/AAP-AN00-GKI-AnyKernel3-$GITHUB_RUN_NUMBER.zip"
+          rm -f "$ZIP"
+          zip -r9 "$ZIP" . -x '*.git*' >/dev/null || { echo "::error::zip 失败"; exit 1; }
+          echo '==== zip 目录结构 ===='
+          unzip -l "$ZIP" | head -30
+          unzip -l "$ZIP" | grep -q 'anykernel.sh' || { echo "::error::zip 缺 anykernel.sh"; exit 1; }
+          unzip -l "$ZIP" | grep -q 'META-INF/com/google/android/update-binary' || { echo "::error::zip 缺 update-binary"; exit 1; }
+          unzip -l "$ZIP" | grep -q 'tools/ak3-core.sh' || { echo "::error::zip 缺 tools/ak3-core.sh"; exit 1; }
+          unzip -l "$ZIP" | grep -qE ' Image$' || { echo "::error::zip 缺 Image"; exit 1; }
+          ls -lh "$ZIP"
 
-      - name: 上传构建产物
+      - name: 上传刷机包
         uses: actions/upload-artifact@v4
         with:
-          name: AAP-AN00-GKI-artifacts
-          path: dist/
+          name: AAP-AN00-GKI-AnyKernel3
+          path: |
+            dist/*.zip
+            dist/system_dlkm.ext4.img
+            dist/system_dlkm.erofs.img
           if-no-files-found: warn
