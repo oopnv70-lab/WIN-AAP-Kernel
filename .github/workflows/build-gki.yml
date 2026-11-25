@@ -73,14 +73,6 @@ jobs:
           echo "=== 覆盖后内核版本 ==="
           grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${KERNEL_PLATFORM}/common/Makefile"
 
-      - name: 恢复构建缓存 (bazel)
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/bazel
-          key: gki-bazel-${{ env.BRANCH }}-${{ hashFiles('scripts/fetch_honor_source.sh', '.github/workflows/build-gki.yml') }}
-          restore-keys: |
-            gki-bazel-${{ env.BRANCH }}-
-
       - name: 编译 GKI 内核 (kleaf, 只编需要的 target)
         run: |
           set -uo pipefail
@@ -99,12 +91,6 @@ jobs:
             exit 1; }
           T1=$(date +%s); echo "编译耗时 $((T1-T0))s"
           tail -15 "$LOG"
-
-      - name: 保存构建缓存 (bazel)
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/bazel
-          key: gki-bazel-${{ env.BRANCH }}-${{ hashFiles('scripts/fetch_honor_source.sh', '.github/workflows/build-gki.yml') }}
 
       - name: 取出产物 (Image / boot.img / system_dlkm)
         run: |
