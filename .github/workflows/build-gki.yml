@@ -14,6 +14,27 @@ jobs:
       - name: 拉取配方仓库
         uses: actions/checkout@v4
 
+      - name: 清理磁盘空间
+        run: |
+          set -x
+          df -h / /mnt 2>/dev/null || df -h
+          echo "=== 清理前磁盘 ==="
+          # 删除 runner 预装的大目录，腾出空间
+          sudo rm -rf /usr/local/lib/android \
+                      /usr/share/dotnet \
+                      /usr/local/share/powershell \
+                      /usr/local/share/chromium \
+                      /usr/local/lib/node_modules \
+                      /opt/ghc \
+                      /opt/hostedtoolcache \
+                      /usr/local/.ghcup \
+                      /usr/share/swift 2>/dev/null || true
+          # 清理 apt 缓存
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+          echo "=== 清理后磁盘 ==="
+          df -h / /mnt 2>/dev/null || df -h
+
       - name: 安装构建依赖
         run: |
           sudo apt-get update
@@ -31,19 +52,33 @@ jobs:
           set -x
           mkdir -p download
           URL="${SRC_URL:-https://iknow-dl.service.hihonor.com/ctkbfm/servlet/download/downloadServlet/H4sIAAAAAAAAAD2QQW_CMAyF_0vOgOw0aRpOtBSkCRWQxs4oNG4XrbRV2g6Naf997cQ4frbfs_2-2dCRP321xJYM2YzZ5lY_MBixcBXtzXXCOD7O4z3AOTOlyw-viAs4H1qqu2bwOS3urn0IjqZ_HwUhAtkcbB7KUFg...KJAi4SJQwLcCIZx23UxPPjP-Y1uZki3roapmjLxvfNY9-Wry2FpPXfdf-TSVs2_P_Ho_0N9Lj_x2Mfv5BZ0IsDNgAQAA.zip}"
+          OUT=download/AAP-AN00_MagicOS11.0_Opensource.zip
+          # 首选 aria2 多线程下载
           aria2c -x 16 -s 16 -k 1M \
             --auto-file-renaming=false \
             --continue=true \
+            --user-agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36' \
             -d download -o AAP-AN00_MagicOS11.0_Opensource.zip \
-            "$URL" && echo "aria2 OK" || {
-              echo "aria2 failed, fallback to curl -L"
-              curl -L --retry 5 --retry-delay 3 -o download/AAP-AN00_MagicOS11.0_Opensource.zip "$URL"
-            }
-          ls -la download/
-          echo "=== check size & magic ==="
-          SIZE=$(stat -c%s download/AAP-AN00_MagicOS11.0_Opensource.zip)
-          echo "downloaded size: $SIZE (expect ~648568824)"
-          file download/AAP-AN00_MagicOS11.0_Opensource.zip
+            "$URL" || echo "aria2 exit non-zero"
+          # 校验：文件必须非空
+          SIZE=$(stat -c%s "$OUT" 2>/dev/null || echo 0)
+          echo "aria2 downloaded size: $SIZE"
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "aria2 结果异常（过小），改用 curl -L 重试"
+            curl -L --retry 5 --retry-delay 3 \
+              -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36' \
+              -o "$OUT" "$URL"
+          fi
+          SIZE=$(stat -c%s "$OUT" 2>/dev/null || echo 0)
+          echo "最终文件大小: $SIZE (期望 ~648568824)"
+          file "$OUT"
+          # 硬门禁：必须是有效 zip 且接近期望大小
+          if [ "$SIZE" -lt 100000000 ]; then
+            echo "::error::下载失败：文件大小 $SIZE 异常，链接可能已失效"
+            exit 1
+          fi
+          echo "=== 校验 zip magic ==="
+          head -c 4 "$OUT" | xxd
 
       - name: 解压嵌套压缩包
         run: |
