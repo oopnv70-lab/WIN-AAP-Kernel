@@ -11,10 +11,10 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout recipe
+      - name: 拉取配方仓库
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: 安装构建依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -24,7 +24,7 @@ jobs:
             kmod python3-setuptools python3-venv
           pip3 install --user abigail-tools 2>/dev/null || true
 
-      - name: Download Honor source
+      - name: 下载荣耀源码包
         env:
           SRC_URL: ${{ secrets.SRC_URL }}
         run: |
@@ -45,7 +45,7 @@ jobs:
           echo "downloaded size: $SIZE (expect ~648568824)"
           file download/AAP-AN00_MagicOS11.0_Opensource.zip
 
-      - name: Extract nested archive
+      - name: 解压嵌套压缩包
         run: |
           set -x
           cd download
@@ -56,7 +56,7 @@ jobs:
           echo "=== kernel version ==="
           grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' Code_Opensource/kernel/Makefile
 
-      - name: Repo init ack
+      - name: 拉取 Google ack 源码
         run: |
           set -x
           mkdir -p ack && cd ack
@@ -64,7 +64,7 @@ jobs:
             -b common-android16-6.12 --depth=1
           repo sync -c -j$(nproc)
 
-      - name: Overlay Honor kernel
+      - name: 覆盖荣耀内核源码
         run: |
           set -x
           rsync -a --delete download/Code_Opensource/kernel/ ack/common/
@@ -72,13 +72,13 @@ jobs:
           grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' ack/common/Makefile
           ls ack/common/
 
-      - name: Build GKI (abi_dist)
+      - name: 构建 GKI 内核
         run: |
           set -x
           cd ack
           tools/bazel run //common:kernel_aarch64_abi_dist --config=release
 
-      - name: Collect artifacts
+      - name: 收集构建产物
         run: |
           set -x
           mkdir -p dist
@@ -88,7 +88,7 @@ jobs:
           done
           ls -laR dist/ | head -100
 
-      - name: Upload artifacts
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: AAP-AN00-GKI-artifacts
