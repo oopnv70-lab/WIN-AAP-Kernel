@@ -7,81 +7,83 @@ concurrency:
   group: gki-build
   cancel-in-progress: false
 
+env:
+  MODEL: AAP-AN00
+  BRANCH: common-android16-6.12
+
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 300
     steps:
       - name: 拉取配方仓库
         uses: actions/checkout@v4
 
       - name: 清理磁盘空间
         run: |
-          set -x
-          df -h / /mnt 2>/dev/null || df -h
-          echo "=== 清理前磁盘 ==="
-          # 删除 runner 预装的大目录，腾出空间
-          sudo rm -rf /usr/local/lib/android \
-                      /usr/share/dotnet \
-                      /usr/local/share/powershell \
-                      /usr/local/share/chromium \
-                      /usr/local/lib/node_modules \
-                      /opt/ghc \
-                      /opt/hostedtoolcache \
-                      /usr/local/.ghcup \
-                      /usr/share/swift 2>/dev/null || true
-          # 清理 apt 缓存
+          set -euxo pipefail
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      /usr/lib/jvm /usr/local/.ghcup || true
           sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/* 2>/dev/null || true
-          echo "=== 清理后磁盘 ==="
-          df -h / /mnt 2>/dev/null || df -h
+          df -h /
 
       - name: 安装构建依赖
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git repo aria2 curl python3 python3-pip \
-            build-essential bison flex bc libssl-dev libelf-dev \
-            dwarves cpio lz4 rsync zip unzip \
-            kmod python3-setuptools python3-venv
-          pip3 install --user abigail-tools 2>/dev/null || true
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            git-core gnupg flex bison build-essential zip unzip curl zlib1g-dev \
+            libc6-dev libncurses-dev libssl-dev libelf-dev bc cpio rsync \
+            python3 python3-pip dwarves lz4 device-tree-compiler ccache \
+            file libarchive-tools libxml2-utils aria2
 
-      - name: 拉取并解压荣耀源码
+      - name: 安装 repo 同步工具
         run: |
-          set -x
+          set -euxo pipefail
+          mkdir -p ~/bin
+          curl -fsSL https://raw.githubusercontent.com/GerritCodeReview/git-repo/main/repo -o ~/bin/repo
+          chmod +x ~/bin/repo
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: 拉取荣耀开源代码 (动态查询有效链接)
+        run: |
+          set -euxo pipefail
           chmod +x scripts/fetch_honor_source.sh
-          ./scripts/fetch_honor_source.sh "AAP-AN00" "${GITHUB_WORKSPACE}/honor_src"
+          ./scripts/fetch_honor_source.sh "${MODEL}" "${GITHUB_WORKSPACE}/honor_src"
           du -sh "${GITHUB_WORKSPACE}/honor_src/Code_Opensource" || true
-          echo "=== kernel version ==="
-          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${GITHUB_WORKSPACE}/honor_src/Code_Opensource/kernel/Makefile"
 
-      - name: 拉取 Google ack 源码
+      - name: 同步 AOSP 内核基础工程
         run: |
-          set -x
-          mkdir -p ack && cd ack
-          repo init -u https://android.googlesource.com/kernel/manifest \
-            -b common-android16-6.12 --depth=1
-          repo sync -c -j$(nproc)
+          set -euxo pipefail
+          mkdir -p kp && cd kp
+          git config --global user.name  "github-actions"
+          git config --global user.email "github-actions@github.com"
+          repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1 --no-repo-verify
+          repo sync -c --no-tags --optimized-fetch -j"$(nproc)" --force-sync
 
       - name: 覆盖荣耀内核源码
         run: |
-          set -x
-          rsync -a --delete "${GITHUB_WORKSPACE}/honor_src/Code_Opensource/kernel/" ack/common/
-          echo "=== after overlay ==="
-          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' ack/common/Makefile
-          ls ack/common/
+          set -euxo pipefail
+          SRC="${GITHUB_WORKSPACE}/honor_src/Code_Opensource"
+          test -d "${SRC}/kernel" || { echo "::error::找不到荣耀 kernel 目录"; exit 1; }
+          rsync -a --delete --exclude='.git' "${SRC}/kernel/" "${GITHUB_WORKSPACE}/kp/common/"
+          echo "=== 覆盖后内核版本 ==="
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${GITHUB_WORKSPACE}/kp/common/Makefile"
 
-      - name: 构建 GKI 内核
+      - name: 构建 GKI 内核 (kleaf abi_dist)
         run: |
-          set -x
-          cd ack
+          set -euxo pipefail
+          cd "${GITHUB_WORKSPACE}/kp"
           tools/bazel run //common:kernel_aarch64_abi_dist --config=release
 
       - name: 收集构建产物
         run: |
-          set -x
+          set -euxo pipefail
           mkdir -p dist
-          find ack -path '*kernel_aarch64*' \( -name 'Image' -o -name 'Image.gz' -o -name '*.img' \) -exec cp -v {} dist/ \; 2>/dev/null || true
-          find ack -name 'kernel_aarch64_gki_artifacts' -type d 2>/dev/null | while read d; do
+          find kp -path '*kernel_aarch64*' \( -name 'Image' -o -name 'Image.gz' -o -name '*.img' \) -exec cp -v {} dist/ \; 2>/dev/null || true
+          find kp -name 'kernel_aarch64_gki_artifacts' -type d 2>/dev/null | while read d; do
             cp -rv "$d" dist/ 2>/dev/null || true
           done
           ls -laR dist/ | head -100

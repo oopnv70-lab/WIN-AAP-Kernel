@@ -10,7 +10,7 @@
 # 产物: $DEST_DIR/Code_Opensource/{README_*.txt,kernel,external,vendor}
 set -euo pipefail
 
-MODEL="${1:-AAK-AN00}"
+MODEL="${1:-AAP-AN00}"
 DEST="${2:-$PWD/honor_src}"
 API='https://selfservice-cn.hihonor.com/ccpcmd/services/dispatch/secured/CCPC/EN/tkb/findDocKnow/1000'
 REFERER='https://www.honor.com/global/opensource/'
