@@ -1,0 +1,96 @@
+name: Build GKI (AAP-AN00)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: gki-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout recipe
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git repo aria2 curl python3 python3-pip \
+            build-essential bison flex bc libssl-dev libelf-dev \
+            dwarves cpio lz4 rsync zip unzip \
+            kmod python3-setuptools python3-venv
+          pip3 install --user abigail-tools 2>/dev/null || true
+
+      - name: Download Honor source
+        env:
+          SRC_URL: ${{ secrets.SRC_URL }}
+        run: |
+          set -x
+          mkdir -p download
+          URL="${SRC_URL:-https://iknow-dl.service.hihonor.com/ctkbfm/servlet/download/downloadServlet/H4sIAAAAAAAAAD2QQW_CMAyF_0vOgOw0aRpOtBSkCRWQxs4oNG4XrbRV2g6Naf997cQ4frbfs_2-2dCRP321xJYM2YzZ5lY_MBixcBXtzXXCOD7O4z3AOTOlyw-viAs4H1qqu2bwOS3urn0IjqZ_HwUhAtkcbB7KUFg...KJAi4SJQwLcCIZx23UxPPjP-Y1uZki3roapmjLxvfNY9-Wry2FpPXfdf-TSVs2_P_Ho_0N9Lj_x2Mfv5BZ0IsDNgAQAA.zip}"
+          aria2c -x 16 -s 16 -k 1M \
+            --auto-file-renaming=false \
+            --continue=true \
+            -d download -o AAP-AN00_MagicOS11.0_Opensource.zip \
+            "$URL" && echo "aria2 OK" || {
+              echo "aria2 failed, fallback to curl -L"
+              curl -L --retry 5 --retry-delay 3 -o download/AAP-AN00_MagicOS11.0_Opensource.zip "$URL"
+            }
+          ls -la download/
+          echo "=== check size & magic ==="
+          SIZE=$(stat -c%s download/AAP-AN00_MagicOS11.0_Opensource.zip)
+          echo "downloaded size: $SIZE (expect ~648568824)"
+          file download/AAP-AN00_MagicOS11.0_Opensource.zip
+
+      - name: Extract nested archive
+        run: |
+          set -x
+          cd download
+          unzip -o AAP-AN00_MagicOS11.0_Opensource.zip
+          ls -la
+          tar xzf Code_Opensource.tar.gz
+          ls -la Code_Opensource/
+          echo "=== kernel version ==="
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' Code_Opensource/kernel/Makefile
+
+      - name: Repo init ack
+        run: |
+          set -x
+          mkdir -p ack && cd ack
+          repo init -u https://android.googlesource.com/kernel/manifest \
+            -b common-android16-6.12 --depth=1
+          repo sync -c -j$(nproc)
+
+      - name: Overlay Honor kernel
+        run: |
+          set -x
+          rsync -a --delete download/Code_Opensource/kernel/ ack/common/
+          echo "=== after overlay ==="
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' ack/common/Makefile
+          ls ack/common/
+
+      - name: Build GKI (abi_dist)
+        run: |
+          set -x
+          cd ack
+          tools/bazel run //common:kernel_aarch64_abi_dist --config=release
+
+      - name: Collect artifacts
+        run: |
+          set -x
+          mkdir -p dist
+          find ack -path '*kernel_aarch64*' \( -name 'Image' -o -name 'Image.gz' -o -name '*.img' \) -exec cp -v {} dist/ \; 2>/dev/null || true
+          find ack -name 'kernel_aarch64_gki_artifacts' -type d 2>/dev/null | while read d; do
+            cp -rv "$d" dist/ 2>/dev/null || true
+          done
+          ls -laR dist/ | head -100
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AAP-AN00-GKI-artifacts
+          path: dist/
+          if-no-files-found: warn
