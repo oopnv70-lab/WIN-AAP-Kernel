@@ -316,18 +316,13 @@ jobs:
           supported.patchlevels=
           supported.vendorpatchlevels=
           '; } # end properties
-          SLOT_SELECT=active;
           BLOCK=boot;
           IS_SLOT_DEVICE=1;
           RAMDISK_COMPRESSION=auto;
           PATCH_VBMETA_FLAG=auto;
           . tools/ak3-core.sh;
-          case "$SLOT" in
-            _a|_b) : ;;
-            *) abort "活动槽异常（SLOT='$SLOT'），拒绝刷写。";;
-          esac
           [ -n "$BLOCK" ] || abort "未能确定目标分区，拒绝刷写。"
-          ui_print "  活动槽：$SLOT"
+          ui_print "  槽位：$SLOT"
           ui_print "  目标分区：$BLOCK"
           split_boot;
           flash_boot;
@@ -342,9 +337,10 @@ jobs:
           echo '==== 包内根目录 ===='
           ls -l anykernel.sh Image
           bash -n anykernel.sh || { echo "::error::anykernel.sh 语法错误"; exit 1; }
-          for chk in 'SLOT_SELECT=active;' 'BLOCK=boot;' 'IS_SLOT_DEVICE=1;' 'PATCH_VBMETA_FLAG=auto;'; do
+          for chk in 'BLOCK=boot;' 'IS_SLOT_DEVICE=1;' 'PATCH_VBMETA_FLAG=auto;'; do
             grep -qF "$chk" anykernel.sh || { echo "::error::anykernel.sh 缺约束：$chk"; exit 1; }
           done
+          grep -qF 'SLOT_SELECT=active' anykernel.sh && { echo "::error::anykernel.sh 不应写死 SLOT_SELECT=active（会与 OTA/root 刷入工具冲突）"; exit 1; }
           grep -qF 'split_boot;' anykernel.sh && grep -qF 'flash_boot;' anykernel.sh \
             || { echo "::error::anykernel.sh 缺 split_boot/flash_boot"; exit 1; }
           ZIP="$D/AAP-AN00-GKI-AnyKernel3-$GITHUB_RUN_NUMBER.zip"
