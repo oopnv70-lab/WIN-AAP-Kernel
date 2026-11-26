@@ -154,6 +154,19 @@ jobs:
           rsync -a --delete --exclude='.git' "${SRC}/kernel/" "${KERNEL_PLATFORM}/common/"
           echo "=== 覆盖后内核版本 ==="
           grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${KERNEL_PLATFORM}/common/Makefile"
+          echo "=== 荣耀定制关键文件存在性校验（防止开源包不完整被 --delete 静默删掉）==="
+          for f in \
+            BUILD.bazel \
+            arch/arm64/configs/gki_defconfig \
+            arch/arm64/configs/ogki.fragment \
+            gki/aarch64/abi.stg \
+            gki/aarch64/symbols/base \
+            gki/aarch64/symbols/honor \
+            gki/aarch64/symbols/qcom ; do
+            test -f "${KERNEL_PLATFORM}/common/$f" \
+              || { echo "::error::荣耀覆盖后缺关键文件 $f（开源包可能不完整，rsync --delete 误删）"; exit 1; }
+          done
+          echo "✓ 荣耀定制关键文件全部在位"
 
       - name: 集成 SukiSU-Nova (内置 CONFIG_KSU=y)
         if: ${{ inputs.builtin_manager == '内置管理器' }}
