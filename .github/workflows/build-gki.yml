@@ -114,6 +114,13 @@ jobs:
           chmod +x scripts/integrate_sukisu.sh
           ./scripts/integrate_sukisu.sh "${KERNEL_PLATFORM}" "${SUKISU_REF}"
 
+      - name: 门禁A · 编译前校验集成结果
+        if: ${{ inputs.builtin_manager == '内置管理器' }}
+        run: |
+          set -uo pipefail
+          chmod +x scripts/check_integration.sh
+          ./scripts/check_integration.sh "${KERNEL_PLATFORM}"
+
       - name: 编译 GKI 内核 (kleaf, 只编需要的 target)
         run: |
           set -uo pipefail
