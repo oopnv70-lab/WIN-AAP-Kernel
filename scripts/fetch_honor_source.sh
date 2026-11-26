@@ -2,11 +2,11 @@
 # 拉取荣耀开源发布中心的指定机型开源源码并解压（CI / 本地通用）
 # 解决两个问题：
 #   1) 下载链接会过期 + 防盗链：每次实时查接口拿"当前有效"签名 URL，再带 Referer 下载。
-#   2) 包是**双层嵌套**：外层 AAK-xxx_Opensource.zip 里装的是 Code_Opensource.tar.gz，
+#   2) 包是**双层嵌套**：外层 AAP-xxx_Opensource.zip 里装的是 Code_Opensource.tar.gz，
 #      只 unzip 外层拿不到源码目录 —— 这里逐层递归展开，直到出现 Code_Opensource/。
 #
 # 用法: fetch_honor_source.sh [MODEL_CODE] [DEST_DIR]
-#   默认 MODEL_CODE=AAK-AN00 (荣耀 WIN RT), DEST_DIR=$PWD/honor_src
+#   默认 MODEL_CODE=AAP-AN00 (荣耀 WIN), DEST_DIR=$PWD/honor_src
 # 产物: $DEST_DIR/Code_Opensource/{README_*.txt,kernel,external,vendor}
 set -euo pipefail
 

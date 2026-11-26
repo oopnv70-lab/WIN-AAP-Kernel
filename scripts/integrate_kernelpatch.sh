@@ -93,7 +93,13 @@ KPIMG="$KP_DIR/kernel/kpimg"
 OUT="$IMAGE.kp"
 BEFORE=$(stat -c%s "$IMAGE")
 MAGIC=$(head -c 6 "$KPIMG")
-SKEY=$(python3 -c "import secrets;print(secrets.token_hex(8))")
+SKEY="${SUPERKEY:-}"
+if [ -z "$SKEY" ]; then
+  SKEY=$(python3 -c "import secrets;print(secrets.token_hex(8))")
+  echo "  superkey: 随机生成（将打印到步骤摘要）"
+else
+  echo "  superkey: 使用 workflow 指定值"
+fi
 echo "  kpimg 魔数: $MAGIC"
 echo "  Image 大小(打补丁前): $BEFORE B"
 "$KPT" -p -i "$IMAGE" -k "$KPIMG" -o "$OUT" -s "$SKEY" 2>&1 | tee "$IMAGE.kptools.log" \
@@ -123,5 +129,5 @@ echo "  ✓ 已用 KP 补丁版 Image 替换原 Image（+$((AFTER-BEFORE)) B）"
   echo "| KernelPatch 版本 | \`$(cat "$KP_DIR/version" | tr -d '\n')\` |"
   echo "| kpimg 魔数 | \`$MAGIC\` |"
   echo "| Image 大小 | $BEFORE → $AFTER 字节（+$((AFTER-BEFORE))） |"
-  echo "| superkey | 随机生成、不打印 |"
+  echo "| superkey | \`$SKEY\` |"
 } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true

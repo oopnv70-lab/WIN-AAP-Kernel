@@ -32,6 +32,11 @@ on:
         options:
           - '启用 KPM'
           - '不启用'
+      superkey:
+        description: 'KernelPatch superkey（KPM 解锁密钥；留空则随机生成并打印到构建摘要）'
+        required: false
+        default: ''
+        type: string
 concurrency:
   group: gki-build
   cancel-in-progress: false
@@ -240,7 +245,7 @@ jobs:
           printf '%s\n' "$FILES" | head -40
           take() {
             n="$1"; src=""
-            p=$(printf '%s\n' "$FILES" | grep -E "(^|/)$n\$" | head -1)
+            p=$(printf '%s\n' "$FILES" | grep -E "(^|/)$n\$" | head -1 || true)
             if [ -n "$p" ]; then
               if [ -f "$p" ]; then src="$p"; else src="$EXEC/$p"; fi
             fi
@@ -264,7 +269,9 @@ jobs:
           ls -la "$D"
 
       - name: 集成 KernelPatch (KPM 后加机制)
-        if: ${{ github.event.inputs.enable_kpm == '启用 KPM' }}
+        if: ${{ inputs.enable_kpm == '启用 KPM' }}
+        env:
+          SUPERKEY: ${{ inputs.superkey || '' }}
         run: |
           set -uo pipefail
           # kpimg 是 freestanding 裸机 ELF，必须 aarch64-none-elf 裸机交叉编译器
