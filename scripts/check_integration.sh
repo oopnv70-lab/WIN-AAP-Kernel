@@ -106,6 +106,47 @@ else
   bad "drivers/kernelsu/Kbuild 不存在"
 fi
 
+# ---------- 7) SUSFS（仅当启用时校验） ----------
+if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
+  echo "[7] SUSFS 集成校验"
+  for f in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h; do
+    if [ -f "$COMMON/$f" ]; then ok "$f 存在"; else bad "$f 缺失"; fi
+  done
+  if grep -qE 'obj-\$\(CONFIG_KSU_SUSFS\)[[:space:]]*\+=[[:space:]]*susfs\.o' "$COMMON/fs/Makefile" 2>/dev/null; then
+    ok "fs/Makefile 挂载 susfs.o"
+  else
+    bad "fs/Makefile 缺 obj-\$(CONFIG_KSU_SUSFS) += susfs.o"
+  fi
+  # task_mmu.c 垫片落位
+  if grep -q 'SUSFS_IS_INODE_SUS_MAP' "$COMMON/fs/proc/task_mmu.c" 2>/dev/null; then
+    ok "task_mmu.c 含 SUSFS SUS_MAP 钩子"
+  else
+    bad "task_mmu.c 缺 SUSFS SUS_MAP 钩子（垫片未应用）"
+  fi
+  # fragment 里的 SUSFS 开关
+  MISS=0
+  for c in CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT \
+           CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_KSU_SUSFS_ENABLE_LOG \
+           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+           CONFIG_KSU_SUSFS_OPEN_REDIRECT CONFIG_KSU_SUSFS_SUS_MAP CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER; do
+    grep -qE "^${c}=y" "$FRAG" 2>/dev/null || { bad "fragment 缺 ${c}=y"; MISS=$((MISS+1)); }
+  done
+  [ "$MISS" -eq 0 ] && ok "fragment 含全部 11 项 CONFIG_KSU_SUSFS*=y"
+  # 符号定义 vs 引用双向核对
+  SYMC="$(dirname "$0")/check_susfs_symbols.py"
+  if [ -f "$SYMC" ]; then
+    if python3 "$SYMC" "$COMMON" > /tmp/susfs_symbols.log 2>&1; then
+      ok "SUSFS 符号完整性核对通过"
+      grep -E '定义|引用|无定义' /tmp/susfs_symbols.log | sed 's/^/    /'
+    else
+      bad "SUSFS 符号核对未通过"
+      tail -20 /tmp/susfs_symbols.log | sed 's/^/    /'
+    fi
+  else
+    bad "check_susfs_symbols.py 不存在"
+  fi
+fi
+
 echo "==== 门禁A 结果 ===="
 if [ "$FAIL" -ne 0 ]; then
   echo "::error::门禁A 未通过，终止构建（避免产出一个看似成功但无 root 的包）"

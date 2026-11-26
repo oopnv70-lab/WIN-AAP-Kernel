@@ -16,7 +16,14 @@ on:
         options:
           - '内置管理器'
           - '不内置'
-
+      enable_susfs:
+        description: 'SUSFS'
+        required: false
+        default: '启用 SUSFS'
+        type: choice
+        options:
+          - '启用 SUSFS'
+          - '不启用'
 concurrency:
   group: gki-build
   cancel-in-progress: false
@@ -131,11 +138,21 @@ jobs:
         if: ${{ inputs.builtin_manager == '内置管理器' }}
         env:
           SUKISU_REF: ${{ inputs.sukisu_ref || 'main' }}
+          ENABLE_SUSFS: ${{ inputs.enable_susfs == '启用 SUSFS' && 'true' || 'false' }}
         run: |
           set -euxo pipefail
           echo "SukiSU ref = ${SUKISU_REF}"
           chmod +x scripts/integrate_sukisu.sh
           ./scripts/integrate_sukisu.sh "${KERNEL_PLATFORM}" "${SUKISU_REF}"
+
+      - name: 集成 SUSFS (susfs4ksu gki-android16-6.12)
+        if: ${{ inputs.builtin_manager == '内置管理器' && inputs.enable_susfs == '启用 SUSFS' }}
+        env:
+          SUSFS_REF: gki-android16-6.12
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/integrate_susfs.sh scripts/shim_susfs_task_mmu.py scripts/check_susfs_symbols.py
+          ./scripts/integrate_susfs.sh "${KERNEL_PLATFORM}" "${SUSFS_REF}"
 
       - name: 门禁A · 编译前校验集成结果
         if: ${{ inputs.builtin_manager == '内置管理器' }}

@@ -101,6 +101,24 @@ cat > "$FRAGMENT" <<'EOF'
 # post_defconfig_fragments 注入，不直接改 gki_defconfig（Kleaf minimized 校验要求本体干净）。
 CONFIG_KSU=y
 EOF
+# 若启用 SUSFS，追加其 11 个配置项（Kconfig 中均为 default y，但显式写更稳妥）
+if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
+  cat >> "$FRAGMENT" <<'EOF'
+# ---- SUSFS ----
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_SUS_PATH=y
+CONFIG_KSU_SUSFS_SUS_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_KSTAT=y
+CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+CONFIG_KSU_SUSFS_ENABLE_LOG=y
+CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+CONFIG_KSU_SUSFS_SUS_MAP=y
+CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y
+EOF
+  echo "==> 已在 fragment 中启用 SUSFS 11 项"
+fi
 echo "==> 已生成 fragment: $FRAGMENT"
 cat "$FRAGMENT"
 
