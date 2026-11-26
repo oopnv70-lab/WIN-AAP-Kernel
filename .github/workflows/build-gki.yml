@@ -97,6 +97,12 @@ jobs:
           ./scripts/fetch_honor_source.sh "${MODEL}" "${GITHUB_WORKSPACE}/honor_src"
           du -sh "${GITHUB_WORKSPACE}/honor_src/Code_Opensource" || true
 
+      - name: 盘点荣耀源码许可证（合规留痕）
+        run: |
+          set -uo pipefail
+          chmod +x scripts/audit_licenses.sh
+          ./scripts/audit_licenses.sh "${GITHUB_WORKSPACE}/honor_src/Code_Opensource" | tee "${GITHUB_WORKSPACE}/license-audit.log"
+
       - name: 同步 AOSP 内核基础工程
         run: |
           set -euxo pipefail
@@ -416,6 +422,7 @@ jobs:
           path: |
             build.log
             sync-monitor.log
+            license-audit.log
             dist/*.log
           if-no-files-found: warn
           retention-days: 14
