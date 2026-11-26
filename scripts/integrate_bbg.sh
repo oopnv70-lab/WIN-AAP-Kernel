@@ -44,14 +44,16 @@ test -f "$BUILD_BAZEL" || { echo "::error::找不到 common/BUILD.bazel ($BUILD_
 # ============ 1) clone Baseband-guard（锁 commit）============
 if [ ! -d "$BBG_DIR/.git" ]; then
   echo "==> clone Baseband-guard ($BBG_REF)"
-  if git clone --depth 1 -b "$BBG_REF" "$BBG_REPO" "$BBG_DIR" 2>/dev/null; then
-    :
-  else
-    echo "==> -b $BBG_REF 失败，改为浅克隆 + 按 sha 切换"
-    rm -rf "$BBG_DIR"
+  rm -rf "$BBG_DIR"
+  if echo "$BBG_REF" | grep -qE '^[0-9a-f]{40}$'; then
+    # 裸 commit sha：git clone -b 不接受 sha，直接浅克隆 + fetch + checkout
+    echo "==> ref 为 commit sha，走浅克隆 + fetch + checkout"
     git clone --depth 1 "$BBG_REPO" "$BBG_DIR"
     git -C "$BBG_DIR" fetch --depth 1 origin "$BBG_REF"
     git -C "$BBG_DIR" checkout "$BBG_REF"
+  else
+    echo "==> ref 为分支/tag，直接 -b 克隆"
+    git clone --depth 1 -b "$BBG_REF" "$BBG_REPO" "$BBG_DIR"
   fi
 else
   echo "==> Baseband-guard 已存在，跳过 clone"
