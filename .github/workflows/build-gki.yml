@@ -62,7 +62,24 @@ jobs:
           git config --global user.name  "github-actions"
           git config --global user.email "github-actions@github.com"
           repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1 --no-repo-verify
-          repo sync -c --no-tags --optimized-fetch -j"$(nproc)" --force-sync
+          # 采样：判断 repo sync 瓶颈是 CPU 打满还是并发不足
+          (
+            while :; do
+              C=$(awk '/^cpu /{u=$2+$4;t=$2+$4+$5;if(t>0)printf "%.0f", u*100/t}' /proc/stat)
+              L=$(cut -d" " -f1-3 /proc/loadavg)
+              echo "t=${SECONDS}s cpu=${C}% load=[${L}]"
+              sleep 5
+            done
+          ) > "$GITHUB_WORKSPACE/sync-monitor.log" 2>&1 &
+          MON=$!
+          T0=$(date +%s)
+          repo sync -c --no-tags --optimized-fetch -j12 --force-sync || { kill $MON 2>/dev/null || true; echo "::error::repo sync 失败"; exit 1; }
+          T1=$(date +%s)
+          kill $MON 2>/dev/null || true
+          wait $MON 2>/dev/null || true
+          echo "=== repo sync 耗时 $((T1-T0))s ==="
+          echo "--- 采样尾部 ---"
+          tail -20 "$GITHUB_WORKSPACE/sync-monitor.log"
 
       - name: 覆盖荣耀内核源码
         run: |
