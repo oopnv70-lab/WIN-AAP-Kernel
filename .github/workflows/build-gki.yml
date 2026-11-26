@@ -110,6 +110,13 @@ jobs:
           echo "nproc=$(nproc)  并发参数=-j16"
           echo "若 avg_run 远小于 16 且 avg_iowait 高 → 瓶颈在磁盘/网络，加并发无效"
           echo "若 avg_cpu 接近 nproc*100 → CPU 打满，加并发反而更差"
+          # 实测同步总量：用于计算真实平均速率（GB/s），是判断「网络慢还是数据多」的唯一硬依据
+          echo "=== 同步后体积（du -sh）==="
+          du -sh "$KERNEL_PLATFORM" || true
+          echo "=== 分项体积（前 10 大）==="
+          du -sh "$KERNEL_PLATFORM"/* 2>/dev/null | sort -rh | head -10 || true
+          echo "=== 磁盘 ==="
+          df -h /
 
       - name: 覆盖荣耀内核源码
         run: |
@@ -272,6 +279,7 @@ jobs:
 
       - name: 上传刷机包
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: AAP-AN00-GKI-AnyKernel3
           path: |
@@ -279,3 +287,17 @@ jobs:
             dist/system_dlkm.ext4.img
             dist/system_dlkm.erofs.img
           if-no-files-found: warn
+
+      # 编译日志必须上传：否则 run 失败时通过 API 拉日志会返回 BlobNotFound，
+      # 导致无法定位错误（此前多次踩坑）。
+      - name: 上传编译日志
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs-r${{ github.run_number }}
+          path: |
+            build.log
+            sync-monitor.log
+            dist/*.log
+          if-no-files-found: warn
+          retention-days: 14
