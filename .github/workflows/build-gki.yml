@@ -55,16 +55,6 @@ jobs:
           ./scripts/fetch_honor_source.sh "${MODEL}" "${GITHUB_WORKSPACE}/honor_src"
           du -sh "${GITHUB_WORKSPACE}/honor_src/Code_Opensource" || true
 
-      - name: 恢复 prebuilts 缓存 (clang/rust/ndk 等)
-        id: cache-prebuilts
-        uses: actions/cache/restore@v4
-        with:
-          # 只缓存 prebuilts 目录：它最大（clang 2-3G + rust + ndk + jdk + gcc），
-          # 且完全稳定——不随 BRANCH 变、不被荣耀源码覆盖、不随本仓库 commit 变。
-          # common/ 不缓存（每次被荣耀源码 rsync --delete 覆盖，缓存了也是白存）。
-          path: ${{ github.workspace }}/kp/prebuilts
-          key: aap-prebuilts-${{ env.BRANCH }}
-
       - name: 同步 AOSP 内核基础工程
         run: |
           set -euxo pipefail
@@ -73,13 +63,6 @@ jobs:
           git config --global user.email "github-actions@github.com"
           repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1 --no-repo-verify
           repo sync -c --no-tags --optimized-fetch -j"$(nproc)" --force-sync
-
-      - name: 保存 prebuilts 缓存 (repo sync 后已就位)
-        if: steps.cache-prebuilts.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ github.workspace }}/kp/prebuilts
-          key: aap-prebuilts-${{ env.BRANCH }}
 
       - name: 覆盖荣耀内核源码
         run: |
