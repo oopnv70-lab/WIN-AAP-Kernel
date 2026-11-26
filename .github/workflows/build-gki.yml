@@ -32,6 +32,14 @@ on:
         options:
           - '启用 KPM'
           - '不启用'
+      enable_bbg:
+        description: 'BBG 防格机 (Baseband-guard LSM)'
+        required: false
+        default: '启用 BBG'
+        type: choice
+        options:
+          - '启用 BBG'
+          - '不启用'
       superkey:
         description: 'KernelPatch superkey（KPM 解锁密钥；留空则随机生成并打印到构建摘要）'
         required: false
@@ -169,6 +177,7 @@ jobs:
           echo "✓ 荣耀定制关键文件全部在位"
 
       - name: 集成 Baseband-guard (防格机 LSM)
+        if: ${{ inputs.enable_bbg == '启用 BBG' }}
         env:
           BBG_REF: 48d9fdea643bcb41d204541400e9d8656b97a54f
         run: |
