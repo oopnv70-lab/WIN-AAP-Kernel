@@ -327,10 +327,9 @@ jobs:
           D="$GITHUB_WORKSPACE/dist"
           test -f "$D/Image" || { echo "::error::dist/Image 不存在，无法打包"; exit 1; }
           rm -rf ak3
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 || {
-            echo "::error::克隆 AnyKernel3 失败"; exit 1; }
+          cp -a "$GITHUB_WORKSPACE/ak3-template" ak3 || {
+            echo "::error::复制内嵌 AnyKernel3 模板失败"; exit 1; }
           cd ak3
-          rm -rf .git .github patch ramdisk modules
           test -f META-INF/com/google/android/update-binary || { echo "::error::AK3 模板缺 update-binary"; exit 1; }
           test -f tools/ak3-core.sh || { echo "::error::AK3 模板缺 tools/ak3-core.sh"; exit 1; }
           cat > anykernel.sh <<'AK3'

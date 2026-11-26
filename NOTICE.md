@@ -18,7 +18,7 @@
 | SUSFS（susfs4ksu @ `9b0b13f0`） | GPL-3.0 | https://gitlab.com/simonpunk/susfs4ksu （分支 `gki-android16-6.12`，commit `9b0b13f069673b9b07b713a5c66977de4d62b175`） | `LICENSES/GPL-3.0.txt` | 文件系统隐藏 / 路径伪装 / SUS_MAP 等 |
 | Baseband-guard（防格机 LSM @ `48d9fde`） | GPL-2.0 | https://github.com/vc-teahouse/Baseband-guard （分支 `main`，commit `48d9fdea643bcb41d204541400e9d8656b97a54f`） | `LICENSES/GPL-2.0.txt` | 防格机：阻止对基带等关键分区的非法写入 |
 | KernelPatch（SukiSU-Nova fork @ `1c5b6089`） | GPL-2.0 | https://github.com/SukiSU-Nova/SukiSU_KernelPatch_patch （分支 `main`，commit `1c5b608916357ac86a94cc736e235db1fac4a29d`；fork 自 bmax121/KernelPatch，已含 6.12 CFI/BTI/MTE 修复） | `LICENSES/GPL-2.0.txt` | KPM 加载器（编译后对 Image 后处理注入 kpimg） |
-| AnyKernel3（osm0sis） | BSD-3-Clause | https://github.com/osm0sis/AnyKernel3 | `LICENSES/AnyKernel3-LICENSE.txt` | AnyKernel3 刷机包打包模板 |
+| AnyKernel3（osm0sis，模板已内嵌 `ak3-template/`） | BSD-3-Clause | https://github.com/osm0sis/AnyKernel3 | `LICENSES/AnyKernel3-LICENSE.txt` | AnyKernel3 刷机包打包模板 |
 
 各许可证全文见 `LICENSES/` 目录：
 - `GPL-2.0.txt` —— GNU GPL v2.0 标准原文（荣耀内核 / AOSP kernel/common / SukiSU-Nova builtin-new / KernelPatch / Baseband-guard / pahole-dwarves 共用）
