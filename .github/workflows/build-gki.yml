@@ -8,8 +8,8 @@ on:
         required: false
         default: 'main'
         type: string
-      run_checks:
-        description: '启用产物门禁校验（关闭后仅产出不校验）'
+      builtin_manager:
+        description: '内置管理器（KSU）——取消勾选则跳过集成，编译出的内核不带 root'
         required: false
         default: true
         type: boolean
@@ -102,6 +102,7 @@ jobs:
           grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${KERNEL_PLATFORM}/common/Makefile"
 
       - name: 集成 SukiSU-Nova (内置 CONFIG_KSU=y)
+        if: ${{ inputs.builtin_manager != false }}
         env:
           SUKISU_REF: ${{ inputs.sukisu_ref || 'main' }}
         run: |
