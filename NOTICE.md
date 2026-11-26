@@ -1,5 +1,5 @@
 # NOTICE
-本仓库（`oopnv70-lab/Win-AAP-Kernel`）是荣耀 WIN（AAP-AN00）自编译 GKI 内核的第三方构建工程。
+本仓库（`oopnv70-lab/WIN-AAP-Kernel`）是荣耀 WIN（AAP-AN00）自编译 GKI 内核的第三方构建工程。
 仓库根目录 `LICENSE` 为 **GNU General Public License v2.0（GPL-2.0）**，适用于本仓库的自有代码
 与内核衍生部分。该 `LICENSE` 为 GNU GPL v2.0 标准原文（自由软件基金会 FSF 发布，与 Linux 内核
 `COPYING` 同文；经 commit `7916c7c` 引入，与 `LICENSES/GPL-2.0.txt` 内容一致）。以下第三方组件
@@ -30,7 +30,7 @@
 
 本刷机包内的 `Image` 为 GPL-2.0 衍生二进制，按 GPL-2.0 第 3 条提供对应完整源码，具体获取方式：
 
-1. **本仓库**：`https://github.com/oopnv70-lab/Win-AAP-Kernel`（main 分支），含全部构建配方（`.github/workflows/build-gki.yml`、`scripts/`）与上游组件锁定 commit；构建本刷机包的确切 commit 见对应 Release / Actions 运行记录的 head_sha。
+1. **本仓库**：`https://github.com/oopnv70-lab/WIN-AAP-Kernel`（main 分支），含全部构建配方（`.github/workflows/build-gki.yml`、`scripts/`）与上游组件锁定 commit；构建本刷机包的确切 commit 见对应 Release / Actions 运行记录的 head_sha。
 2. **荣耀官方内核源码**：入口 `https://www.honor.com/global/opensource/` → 按型号 `AAP-AN00` 检索 → 下载 `AAP-AN00_MagicOS11.0_Opensource.zip`（文件 URL 为实时签名、会过期，经上述入口重定向可重新获取有效链接）。
 3. **AOSP 基线**：`https://android.googlesource.com/kernel/common`（`common-android16-6.12`）+ `https://android.googlesource.com/kernel/build`（Kleaf）+ `kernel/manifest`。
 4. **上游补丁组件**：SukiSU-Nova / SUSFS / KernelPatch，仓库与锁定 commit 见上表。

@@ -1,4 +1,4 @@
-# Win-AAP-Kernel
+# WIN-AAP-Kernel
 
 荣耀 WIN (AAP-AN00) 自编译 GKI 内核 · SukiSU-Nova + SUSFS + KPM · CI (GitHub Actions) 构建
 
