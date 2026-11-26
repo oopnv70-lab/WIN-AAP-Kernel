@@ -129,6 +129,14 @@ CONFIG_KSU=y
 # 这里强制开 KSU_DEBUG=y，让 Makefile 跳过 -g0（副作用仅是打开调试日志）。
 CONFIG_KSU_DEBUG=y
 EOF
+# 若启用 KPM，追加 CONFIG_KPM=y（KPM 引擎编译前提；编译后由 integrate_kernelpatch.sh 做 kpimg 后加注入，两者缺一不可）
+if [ "${ENABLE_KPM:-false}" = "true" ]; then
+  cat >> "$FRAGMENT" <<'EOF'
+# ---- KPM ----
+CONFIG_KPM=y
+EOF
+  echo "==> 已在 fragment 中启用 CONFIG_KPM=y"
+fi
 # 若启用 SUSFS，追加其 12 个配置项（Kconfig 中均为 default y，但显式写更稳妥）
 if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
   cat >> "$FRAGMENT" <<'EOF'

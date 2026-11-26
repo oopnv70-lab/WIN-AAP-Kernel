@@ -153,8 +153,9 @@ jobs:
       - name: 集成 SukiSU-Nova (内置 CONFIG_KSU=y)
         if: ${{ inputs.builtin_manager == '内置管理器' }}
         env:
-          SUKISU_REF: ${{ inputs.sukisu_ref || 'builtin-new' }}
+          SUKISU_REF: ${{ inputs.sukisu_ref || '5a3ec4145059ed2c4f22c70a16a28a616e104c33' }}
           ENABLE_SUSFS: ${{ inputs.enable_susfs == '启用 SUSFS' && 'true' || 'false' }}
+          ENABLE_KPM: ${{ inputs.enable_kpm == '启用 KPM' && 'true' || 'false' }}
         run: |
           set -euxo pipefail
           echo "SukiSU ref = ${SUKISU_REF}"
@@ -164,7 +165,7 @@ jobs:
       - name: 集成 SUSFS (susfs4ksu gki-android16-6.12)
         if: ${{ inputs.builtin_manager == '内置管理器' && inputs.enable_susfs == '启用 SUSFS' }}
         env:
-          SUSFS_REF: gki-android16-6.12
+          SUSFS_REF: 9b0b13f069673b9b07b713a5c66977de4d62b175
         run: |
           set -euxo pipefail
           chmod +x scripts/integrate_susfs.sh scripts/shim_susfs_task_mmu.py scripts/check_susfs_symbols.py
