@@ -90,25 +90,44 @@ fi
 
 # ---------- 6) 包名没有被意外改坏 ----------
 echo "[6] 包名定义"
-KBLD="$DRI/kernelsu/Kbuild"
-if [ -f "$KBLD" ]; then
-  PN=$(grep -E 'KSU_PACKAGE_NAME[[:space:]]*\?=' "$KBLD" 2>/dev/null | head -1 | sed 's/.*=[[:space:]]*//')
+# main 分支：Kbuild 里 KSU_PACKAGE_NAME ?= ...
+# builtin 分支：没有 Kbuild，包名在 Makefile 里（KSU_PACKAGE_NAME ?= com.sukisu.nova）
+PKG_SRC=""
+if [ -f "$DRI/kernelsu/Kbuild" ]; then
+  PKG_SRC="$DRI/kernelsu/Kbuild"
+elif [ -f "$DRI/kernelsu/Makefile" ]; then
+  PKG_SRC="$DRI/kernelsu/Makefile"
+fi
+if [ -n "$PKG_SRC" ]; then
+  PN=$(grep -E 'KSU_PACKAGE_NAME[[:space:]]*\?=' "$PKG_SRC" 2>/dev/null | head -1 | sed 's/.*=[[:space:]]*//')
   if [ -n "$PN" ]; then
-    echo "    Kbuild 中默认包名 = $PN"
+    echo "    $(basename "$PKG_SRC") 中默认包名 = $PN"
     case "$PN" in
       com.sukisu.nova*) ok "包名为 $PN（nova 系列）" ;;
       *) bad "包名异常: $PN（期望 com.sukisu.nova）" ;;
     esac
   else
-    echo "    ::warning::Kbuild 未找到 KSU_PACKAGE_NAME ?= 行（可能定义在别处，非致命）"
+    echo "    ::warning::$(basename "$PKG_SRC") 未找到 KSU_PACKAGE_NAME ?= 行（可能定义在别处，非致命）"
   fi
 else
-  bad "drivers/kernelsu/Kbuild 不存在"
+  bad "drivers/kernelsu 下既无 Kbuild 也无 Makefile"
 fi
 
 # ---------- 7) SUSFS（仅当启用时校验） ----------
 if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
   echo "[7] SUSFS 集成校验"
+  # 前置条件：KSU 的 Kconfig 里必须真的存在 config KSU_SUSFS，否则 kleaf 配置校验必失败
+  # （main 分支就缺这个符号，实测报 CONFIG_KSU_SUSFS: actual '', expected 'y'）
+  if grep -q '^config KSU_SUSFS$' "$DRI/kernelsu/Kconfig" 2>/dev/null; then
+    ok "KSU Kconfig 定义 config KSU_SUSFS"
+  else
+    bad "KSU Kconfig 缺 config KSU_SUSFS（SukiSU-Nova 分支选错，main 不支持 SUSFS）"
+  fi
+  if [ -f "$DRI/kernelsu/extension/susfs_extension.c" ]; then
+    ok "KSU 侧 susfs_extension.c 存在"
+  else
+    bad "KSU 侧缺 extension/susfs_extension.c（该分支无 SUSFS 集成代码）"
+  fi
   for f in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h; do
     if [ -f "$COMMON/$f" ]; then ok "$f 存在"; else bad "$f 缺失"; fi
   done

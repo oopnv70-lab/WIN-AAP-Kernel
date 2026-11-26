@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       sukisu_ref:
-        description: 'SukiSU-Nova 分支/tag/commit（默认 main）'
+        description: 'SukiSU-Nova 分支/tag/commit（必须用 builtin：main 分支无 SUSFS 符号）'
         required: false
-        default: 'main'
+        default: 'builtin'
         type: string
       builtin_manager:
         description: '内置管理器'
@@ -168,6 +168,34 @@ jobs:
           set -uo pipefail
           chmod +x scripts/check_integration.sh
           ./scripts/check_integration.sh "${KERNEL_PLATFORM}"
+
+      - name: 配置预检 · 只解析 Kconfig 不编译（失败 40 秒内暴露符号问题）
+        run: |
+          set -uo pipefail
+          cd "$KERNEL_PLATFORM"
+          LOG="$GITHUB_WORKSPACE/config-check.log"
+          ls -l tools/bazel || { echo "::error::缺少 tools/bazel"; exit 1; }
+          T0=$(date +%s)
+          # 只构建 config target：kleaf 会把 gki_defconfig + ogki.fragment + ksu.fragment 合成
+          # 最终 .config，并逐条比对 fragment 里声明的每个符号。任何符号不存在（actual ''）
+          # 或值不符都会在这里失败，而不是等到几十分钟编译之后。
+          tools/bazel build --config=fast //common:kernel_aarch64_config >"$LOG" 2>&1 || {
+            echo "::error::配置解析失败（Kconfig 符号不可用或与 fragment 不符）"
+            grep -inE 'ERROR: CONFIG_|actual .*expected|ERROR:' "$LOG" | head -60
+            tail -40 "$LOG"
+            exit 1; }
+          T1=$(date +%s); echo "配置解析耗时 $((T1-T0))s"
+          # 若能在产物里找到 .config，就把 SUSFS 相关项打出来存证
+          CFG=$(find bazel-bin -name '.config' -type f 2>/dev/null | head -1)
+          if [ -n "$CFG" ]; then
+            echo "=== 最终 .config 中的 KSU/SUSFS 项（$CFG）==="
+            grep -E '^CONFIG_KSU' "$CFG" || true
+            grep -E '^CONFIG_KSU_SUSFS' "$CFG" || echo "::error::最终 .config 里没有 CONFIG_KSU_SUSFS=y"
+            cp "$CFG" "$GITHUB_WORKSPACE/kernel.config.final" 2>/dev/null || true
+          else
+            echo "::warning::未找到 bazel-bin 下的 .config（不影响，构建已通过配置校验）"
+          fi
+          tail -5 "$LOG"
 
       - name: 编译 GKI 内核 (kleaf, 只编需要的 target)
         run: |

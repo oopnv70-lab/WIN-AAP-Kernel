@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
-# 集成 SukiSU-Nova（main 分支，CONFIG_KSU=y 内置）到荣耀 GKI 内核树（android16-6.12 / kleaf）。
+# 集成 SukiSU-Nova（builtin 分支，CONFIG_KSU=y 内置）到荣耀 GKI 内核树（android16-6.12 / kleaf）。
 # 用法：integrate_sukisu.sh <KERNEL_PLATFORM> [SUKISU_REF]
 #   KERNEL_PLATFORM —— 含 common/ 的内核工程根（即 kp/）
-#   SUKISU_REF      —— SukiSU-Nova 分支/tag/commit，默认 main
+#   SUKISU_REF      —— SukiSU-Nova 分支/tag/commit，默认 builtin
+#
+# 为什么必须是 builtin 分支而不是 main：
+#   main（=dev）的 kernel/Kconfig 只有 64 行，只有 KSU/KSU_DEBUG/KSU_MANUAL_SU/KPM/
+#   KSU_DISABLE_MANAGER/KSU_DISABLE_POLICY/KSU_X86_PATCH_SYSCALL_DISPATCHER，
+#   全树没有任何 susfs 字样 —— 没有 CONFIG_KSU_SUSFS 这个符号，也没有
+#   kernel/extension/susfs_extension.c。若在 main 上写 CONFIG_KSU_SUSFS=y，
+#   Kconfig 里该符号不存在，kleaf 的配置校验会报
+#   「CONFIG_KSU_SUSFS: actual '', expected 'y'」并中止构建（实测已发生一次）。
+#   builtin 分支：kernel/Kconfig 137 行、含 KSU_SUSFS 及 10 个子项，
+#   有 kernel/extension/susfs_extension.c，且 kernel/Makefile 里明确写了
+#   「As we are building gki only」与 6.12 的 $(src) 绝对路径 workaround。
 #
 # 路线依据（SukiSU-Nova 官方集成文档）：
 #   - main 分支：kprobes/kretprobes/tracepoint 运行时注册，不需要改内核源码（不手动 hook）。
@@ -17,7 +28,7 @@
 set -euo pipefail
 
 ROOT="${1:-}"
-SUKISU_REF="${2:-main}"
+SUKISU_REF="${2:-builtin}"
 if [ -z "$ROOT" ]; then
   echo "::error::用法: $0 <KERNEL_PLATFORM> [SUKISU_REF]" >&2
   exit 1
@@ -97,7 +108,7 @@ fi
 # ============ B. Kleaf 配置侧：生成 fragment + 追加到 post_defconfig_fragments ============
 # B1) 生成 ksu.fragment（不改 gki_defconfig 本体）
 cat > "$FRAGMENT" <<'EOF'
-# SukiSU-Nova (main) defconfig fragment —— 通过 common_kernel 的
+# SukiSU-Nova defconfig fragment —— 通过 common_kernel 的
 # post_defconfig_fragments 注入，不直接改 gki_defconfig（Kleaf minimized 校验要求本体干净）。
 CONFIG_KSU=y
 EOF
@@ -168,6 +179,21 @@ test -f "$FRAGMENT" && echo "  ✓ ksu.fragment 存在" || { echo "  ✗ fragmen
 grep -q 'ksu.fragment' "$BUILD_BAZEL" && echo "  ✓ BUILD.bazel 已引用 ksu.fragment" || { echo "  ✗ BUILD.bazel 缺 ksu.fragment 引用"; exit 1; }
 grep -q '^CONFIG_KSU=' "${COMMON}/arch/arm64/configs/gki_defconfig" && { echo "  ✗ gki_defconfig 被污染（含 CONFIG_KSU），不允许"; exit 1; } || echo "  ✓ gki_defconfig 本体干净（无 CONFIG_KSU）"
 # KSU 依赖确认（main 分支要求 KPROBES=y + EXT4_FS=y）
-grep -q '^CONFIG_KPROBES=y' "${COMMON}/arch/arm64/configs/gki_defconfig" && echo "  ✓ CONFIG_KPROBES=y" || echo "  ⚠ 未在 gki_defconfig 找到 CONFIG_KPROBES=y（可能在别的 fragment）"
-grep -q '^CONFIG_EXT4_FS=y' "${COMMON}/arch/arm64/configs/gki_defconfig" && echo "  ✓ CONFIG_EXT4_FS=y" || echo "  ⚠ 未在 gki_defconfig 找到 CONFIG_EXT4_FS=y"
-echo "==> SukiSU-Nova 集成完成（main 分支，CONFIG_KSU=y 内置，包名=$PKG_NAME）"
+grep -q '^CONFIG_EXT4_FS=y' "${COMMON}/arch/arm64/configs/gki_defconfig" && echo "  ✓ CONFIG_EXT4_FS=y" || echo "  ⚠ 未在 gki_defconfig 找到 CONFIG_EXT4_FS=y（可能在别的 fragment）"
+# SUSFS 能力自检：Kconfig 里必须真的存在该符号，否则 kleaf 配置校验必然报
+# 「CONFIG_KSU_SUSFS: actual '', expected 'y'」。main 分支就是这种情况，这里提前拦住。
+if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
+  if grep -q '^config KSU_SUSFS$' "$DRI/kernelsu/Kconfig"; then
+    echo "  ✓ 该分支 Kconfig 定义 config KSU_SUSFS"
+  else
+    echo "  ✗ 该分支 Kconfig 没有 config KSU_SUSFS —— 分支选错（main 分支不支持 SUSFS），终止"
+    exit 1
+  fi
+  if [ -f "$DRI/kernelsu/extension/susfs_extension.c" ]; then
+    echo "  ✓ 存在 extension/susfs_extension.c"
+  else
+    echo "  ✗ 缺 extension/susfs_extension.c —— 该分支无 SUSFS 集成代码，终止"
+    exit 1
+  fi
+fi
+echo "==> SukiSU-Nova 集成完成（$SUKISU_REF 分支，CONFIG_KSU=y 内置，包名=$PKG_NAME）"
