@@ -39,7 +39,7 @@
 set -euo pipefail
 
 ROOT="${1:-}"
-SUKISU_REF="${2:-builtin-new}"
+SUKISU_REF="${2:-5a3ec4145059ed2c4f22c70a16a28a616e104c33}"
 if [ -z "$ROOT" ]; then
   echo "::error::用法: $0 <KERNEL_PLATFORM> [SUKISU_REF]" >&2
   exit 1
@@ -69,10 +69,11 @@ if [ ! -d "$ROOT/KernelSU/.git" ]; then
   if git clone --depth 1 -b "$SUKISU_REF" https://github.com/SukiSU-Nova/SukiSU-Nova.git "$ROOT/KernelSU" 2>/dev/null; then
     :
   else
-    # 不是分支/tag时（如 commit sha），克隆后再切换
-    echo "==> -b $SUKISU_REF 失败，改为按 commit 切换"
+    # 不是分支/tag时（如 commit sha），浅克隆默认分支后按 sha 精确定位（--depth 1 -b sha 不被支持）
+    echo "==> -b $SUKISU_REF 失败，改为浅克隆 + 按 sha 切换"
     rm -rf "$ROOT/KernelSU"
-    git clone https://github.com/SukiSU-Nova/SukiSU-Nova.git "$ROOT/KernelSU"
+    git clone --depth 1 https://github.com/SukiSU-Nova/SukiSU-Nova.git "$ROOT/KernelSU"
+    git -C "$ROOT/KernelSU" fetch --depth 1 origin "$SUKISU_REF"
     git -C "$ROOT/KernelSU" checkout "$SUKISU_REF"
   fi
 else

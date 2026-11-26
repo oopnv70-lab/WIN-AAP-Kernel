@@ -20,7 +20,7 @@ set -euo pipefail
 ROOT="${1:?用法: integrate_kernelpatch.sh <KERNEL_PLATFORM> <IMAGE_PATH>}"
 IMAGE="${2:?用法: integrate_kernelpatch.sh <KERNEL_PLATFORM> <IMAGE_PATH>}"
 KP_REPO="https://github.com/SukiSU-Nova/SukiSU_KernelPatch_patch.git"
-KP_BRANCH="main"
+KP_BRANCH="1c5b608916357ac86a94cc736e235db1fac4a29d"  # main @ 1c5b6089（含 6.12 CFI/BTI/MTE 修复）
 KP_DIR="${ROOT}/KernelPatch"
 
 echo "==> KERNEL_PLATFORM = $ROOT"
@@ -30,7 +30,15 @@ test -f "$IMAGE" || { echo "::error::找不到 Image ($IMAGE)"; exit 1; }
 # ============ 1) 当场拉取 KernelPatch（main 分支，GPL-2.0）============
 if [ ! -d "$KP_DIR/.git" ]; then
   echo "==> clone KernelPatch ($KP_BRANCH)"
-  git clone --depth 1 -b "$KP_BRANCH" "$KP_REPO" "$KP_DIR"
+  if git clone --depth 1 -b "$KP_BRANCH" "$KP_REPO" "$KP_DIR" 2>/dev/null; then
+    :
+  else
+    echo "==> -b $KP_BRANCH 失败，改为浅克隆 + 按 sha 切换"
+    rm -rf "$KP_DIR"
+    git clone --depth 1 "$KP_REPO" "$KP_DIR"
+    git -C "$KP_DIR" fetch --depth 1 origin "$KP_BRANCH"
+    git -C "$KP_DIR" checkout "$KP_BRANCH"
+  fi
 else
   echo "==> KernelPatch 已存在，跳过 clone"
 fi

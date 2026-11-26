@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       sukisu_ref:
-        description: 'SukiSU-Nova 分支/tag/commit（必须用 builtin-new：builtin 在 6.12 上 LSM API 编译失败，main 无 SUSFS 符号）'
+        description: 'SukiSU-Nova 分支/tag/commit（默认锁 builtin-new @ 5a3ec414；builtin 在 6.12 上 LSM API 编译失败，main 无 SUSFS 符号）'
         required: false
-        default: 'builtin-new'
+        default: '5a3ec4145059ed2c4f22c70a16a28a616e104c33'
         type: string
       builtin_manager:
         description: '内置管理器'

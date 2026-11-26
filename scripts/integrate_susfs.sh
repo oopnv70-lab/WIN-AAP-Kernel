@@ -14,7 +14,7 @@
 set -euo pipefail
 
 ROOT="${1:-}"
-SUSFS_REF="${2:-gki-android16-6.12}"
+SUSFS_REF="${2:-9b0b13f069673b9b07b713a5c66977de4d62b175}"
 if [ -z "$ROOT" ]; then
   echo "::error::用法: $0 <KERNEL_PLATFORM> [SUSFS_REF]" >&2
   exit 1
@@ -36,7 +36,15 @@ test -d "$COMMON" || { echo "::error::找不到 common/ ($COMMON)"; exit 1; }
 rm -rf "$WORK"
 mkdir -p "$WORK"
 echo "==> clone $SUSFS_URL ($SUSFS_REF)"
-git clone --depth 1 -b "$SUSFS_REF" "$SUSFS_URL" "$WORK/susfs4ksu"
+if git clone --depth 1 -b "$SUSFS_REF" "$SUSFS_URL" "$WORK/susfs4ksu" 2>/dev/null; then
+  :
+else
+  echo "==> -b $SUSFS_REF 失败，改为浅克隆 + 按 sha 切换"
+  rm -rf "$WORK/susfs4ksu"
+  git clone --depth 1 "$SUSFS_URL" "$WORK/susfs4ksu"
+  git -C "$WORK/susfs4ksu" fetch --depth 1 origin "$SUSFS_REF"
+  git -C "$WORK/susfs4ksu" checkout "$SUSFS_REF"
+fi
 SRC="$WORK/susfs4ksu"
 PATCH="$SRC/kernel_patches/$PATCH_NAME"
 test -f "$PATCH" || { echo "::error::找不到补丁 $PATCH"; exit 1; }
