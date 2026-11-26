@@ -89,6 +89,10 @@ jobs:
           # run  = /proc/stat 里 procs_running（真实并发进程数）
           # load = 1 分钟平均负载
           (
+            # 关闭 xtrace：否则 `+ echo 't=..s cpu=..% ..'` 这类追迹行会被一起写进采样文件，
+            # 其中含 "cpu="，awk 会把它当样本、$4 取到 "533s" 被数值化成 533 累加进 cpu，
+            # 导致 avg 被拉爆（历史日志出现过 avg_cpu=140% > max_cpu=98% 的自相矛盾）。
+            { set +x; } 2>/dev/null
             while :; do
               read -r C IOW RUN < <(awk '
                 /^cpu /{u=$2+$4; t=$2+$3+$4+$5+$6+$7+$8; if(t>0) c=u*100/t; iw=$6*100/t}
@@ -101,7 +105,11 @@ jobs:
           ) > "$GITHUB_WORKSPACE/sync-monitor.log" 2>&1 &
           MON=$!
           T0=$(date +%s)
-          repo sync -c --no-tags --optimized-fetch -j16 --force-sync || { kill $MON 2>/dev/null || true; echo "::error::repo sync 失败"; exit 1; }
+          # 并发实测（同一 runner）：-j4=453s、-j12=396s（最优）、-j16=538s。
+          # 4 核机上 16 路并发会在 index-pack 解包阶段把 CPU 打满（实测 max_cpu=98%），
+          # 解包跟不上导致读管道背压、TCP 窗口收缩，吞吐反而从 72MB/s 掉到 53MB/s。
+          # 故固定在 -j12，不要再往上加。
+          repo sync -c --no-tags --optimized-fetch -j12 --force-sync || { kill $MON 2>/dev/null || true; echo "::error::repo sync 失败"; exit 1; }
           T1=$(date +%s)
           kill $MON 2>/dev/null || true
           wait $MON 2>/dev/null || true
@@ -114,8 +122,8 @@ jobs:
           echo "--- 采样尾部 20 行 ---"
           tail -20 "$GITHUB_WORKSPACE/sync-monitor.log"
           echo "--- 并发度解读 ---"
-          echo "nproc=$(nproc)  并发参数=-j16"
-          echo "若 avg_run 远小于 16 且 avg_iowait 高 → 瓶颈在磁盘/网络，加并发无效"
+          echo "nproc=$(nproc)  并发参数=-j12"
+          echo "若 avg_run 远小于 12 且 avg_iowait 高 → 瓶颈在磁盘/网络，加并发无效"
           echo "若 avg_cpu 接近 nproc*100 → CPU 打满，加并发反而更差"
           # 实测同步总量：用于计算真实平均速率（GB/s），是判断「网络慢还是数据多」的唯一硬依据
           echo "=== 同步后体积（du -sh）==="
