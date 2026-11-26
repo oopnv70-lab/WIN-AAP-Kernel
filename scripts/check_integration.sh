@@ -142,6 +142,25 @@ if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
   else
     bad "task_mmu.c 缺 SUSFS SUS_MAP 钩子（垫片未应用）"
   fi
+  # 只补 SUS_MAP 三个 hunk 是不够的：补丁对 task_mmu.c 共有 8 个 hunk，
+  # 其中 Hunk#1 是 #include <linux/susfs_def.h>（SUSFS_IS_INODE_SUS_MAP 宏的来源），
+  # Hunk#2/#3 是 show_map_vma 的 open_redirect / sus_kstat spoof，#7/#8 是 pagemap。
+  # 少了 include 会直接编译失败：call to undeclared function 'SUSFS_IS_INODE_SUS_MAP'。
+  if grep -q '#include <linux/susfs_def.h>' "$COMMON/fs/proc/task_mmu.c" 2>/dev/null; then
+    ok "task_mmu.c 含 #include <linux/susfs_def.h>"
+  else
+    bad "task_mmu.c 缺 <linux/susfs_def.h> 包含（会导致 SUSFS_IS_INODE_SUS_MAP 未声明）"
+  fi
+  if grep -q 'susfs_open_redirect_spoof_show_map_vma_srcu' "$COMMON/fs/proc/task_mmu.c" 2>/dev/null; then
+    ok "task_mmu.c 含 show_map_vma open_redirect spoof"
+  else
+    bad "task_mmu.c 缺 show_map_vma open_redirect spoof（Hunk#2/#3 未落地）"
+  fi
+  if grep -q 'vma->vm_file && SUSFS_IS_INODE_SUS_MAP' "$COMMON/fs/proc/task_mmu.c" 2>/dev/null; then
+    ok "task_mmu.c 含 pagemap SUS_MAP 判断"
+  else
+    bad "task_mmu.c 缺 pagemap SUS_MAP 判断（Hunk#7/#8 未落地）"
+  fi
   # fragment 里的 SUSFS 开关
   MISS=0
   for c in CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT \

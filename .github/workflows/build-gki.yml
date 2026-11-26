@@ -186,7 +186,7 @@ jobs:
             exit 1; }
           T1=$(date +%s); echo "配置解析耗时 $((T1-T0))s"
           # 若能在产物里找到 .config，就把 SUSFS 相关项打出来存证
-          CFG=$(find bazel-bin -name '.config' -type f 2>/dev/null | head -1)
+          CFG=$(find -L bazel-bin -name '.config' -type f 2>/dev/null | head -1)
           if [ -n "$CFG" ]; then
             echo "=== 最终 .config 中的 KSU/SUSFS 项（$CFG）==="
             grep -E '^CONFIG_KSU' "$CFG" || true
