@@ -168,6 +168,14 @@ jobs:
           done
           echo "✓ 荣耀定制关键文件全部在位"
 
+      - name: 集成 Baseband-guard (防格机 LSM)
+        env:
+          BBG_REF: 48d9fdea643bcb41d204541400e9d8656b97a54f
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/integrate_bbg.sh
+          ./scripts/integrate_bbg.sh "${KERNEL_PLATFORM}" "${BBG_REF}"
+
       - name: 集成 SukiSU-Nova (内置 CONFIG_KSU=y)
         if: ${{ inputs.builtin_manager == '内置管理器' }}
         env:
