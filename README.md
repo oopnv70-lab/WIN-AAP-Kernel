@@ -1,6 +1,6 @@
 # Win-AAP-Kernel
 
-荣耀 WIN (AAP-AN00) 纯 GKI 内核 · CI (GitHub Actions) 构建
+荣耀 WIN (AAP-AN00) 自编译 GKI 内核 · SukiSU-Nova + SUSFS + KPM · CI (GitHub Actions) 构建
 
 ## 设备信息
 
@@ -10,7 +10,7 @@
 | 型号 | AAP-AN00 |
 | 内核主线 | Linux 6.12.58 |
 | 内核代际 | common-android16-6.12 (GKI) |
-| 路线 | 纯 GKI（不集成 KSU / SUSFS / KPM） |
+| 路线 | 自编译 GKI + SukiSU-Nova（内置 KSU）+ SUSFS + KPM（KernelPatch 后加机制） |
 
 ## 源码来源
 
@@ -28,8 +28,12 @@
 4. 递归展开多层嵌套压缩包
 5. repo 拉取 AOSP kernel（common-android16-6.12）
 6. 荣耀 kernel 覆盖 common
-7. kleaf 编译三个 target（Image / boot.img / system_dlkm）
-8. 打包 AnyKernel3 刷机包
+7. 集成 SukiSU-Nova（builtin-new，内置 CONFIG_KSU=y）
+8. 集成 SUSFS（susfs4ksu gki-android16-6.12，编译期打补丁）
+9. 门禁A 编译前校验 + 配置预检
+10. kleaf 编译三个 target（Image / boot.img / system_dlkm）
+11. 集成 KernelPatch（KPM 后加机制，编译后对 Image 注入 kpimg）
+12. 打包 AnyKernel3 刷机包
 
 构建命令：
 ```
