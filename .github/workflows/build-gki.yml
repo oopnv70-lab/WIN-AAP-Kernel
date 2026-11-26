@@ -390,6 +390,10 @@ jobs:
           unzip -l "$ZIP" | grep -q 'META-INF/com/google/android/update-binary' || { echo "::error::zip 缺 update-binary"; exit 1; }
           unzip -l "$ZIP" | grep -q 'tools/ak3-core.sh' || { echo "::error::zip 缺 tools/ak3-core.sh"; exit 1; }
           unzip -l "$ZIP" | grep -qE ' Image$' || { echo "::error::zip 缺 Image"; exit 1; }
+          unzip -l "$ZIP" | grep -q 'NOTICE.md' || { echo "::error::zip 缺 NOTICE.md（合规声明）"; exit 1; }
+          unzip -l "$ZIP" | grep -qE ' LICENSE$' || { echo "::error::zip 缺根 LICENSE"; exit 1; }
+          unzip -l "$ZIP" | grep -q 'LICENSES/GPL-2.0.txt' || { echo "::error::zip 缺 LICENSES/GPL-2.0.txt"; exit 1; }
+          unzip -l "$ZIP" | grep -q 'LICENSES/GPL-3.0.txt' || { echo "::error::zip 缺 LICENSES/GPL-3.0.txt（SUSFS）"; exit 1; }
           ls -lh "$ZIP"
 
       - name: 上传刷机包
