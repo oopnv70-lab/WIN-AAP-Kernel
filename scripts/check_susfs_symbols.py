@@ -71,7 +71,12 @@ def main():
                     defs[name] = (p, is_static)
 
     inl = set()
-    for h in glob.glob('/tmp/sus612/kernel_patches/include/linux/*.h'):
+    # 从「被检查的内核树」里读 SUSFS 头文件，不能写死本地路径
+    #（旧版硬编码 /tmp/sus612/...，CI 上该路径不存在，导致这项恒为 0）
+    for h in (os.path.join(root_dir, 'include/linux/susfs.h'),
+              os.path.join(root_dir, 'include/linux/susfs_def.h')):
+        if not os.path.exists(h):
+            continue
         txt = strip_comments(open(h, encoding='utf-8').read())
         for m in re.finditer(r'static\s+inline\s+[\w\s\*]+?\s+([a-zA-Z_]\w*)\s*\(', txt):
             inl.add(m.group(1))
