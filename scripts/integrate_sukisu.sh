@@ -122,6 +122,11 @@ cat > "$FRAGMENT" <<'EOF'
 # SukiSU-Nova defconfig fragment —— 通过 common_kernel 的
 # post_defconfig_fragments 注入，不直接改 gki_defconfig（Kleaf minimized 校验要求本体干净）。
 CONFIG_KSU=y
+# 荣耀 6.12 开了 CONFIG_GENDWARFKSYMS=y（靠 DWARF 生成模块符号表），
+# 而 SukiSU-Nova builtin-new 的 Makefile 在 KSU_DEBUG 未开启时会往 ksu.o 加 -g0
+# 去掉调试信息，导致 gendwarfksyms 报 "dwarf_get_units failed: no debugging information?"。
+# 这里强制开 KSU_DEBUG=y，让 Makefile 跳过 -g0（副作用仅是打开调试日志）。
+CONFIG_KSU_DEBUG=y
 EOF
 # 若启用 SUSFS，追加其 12 个配置项（Kconfig 中均为 default y，但显式写更稳妥）
 if [ "${ENABLE_SUSFS:-false}" = "true" ]; then

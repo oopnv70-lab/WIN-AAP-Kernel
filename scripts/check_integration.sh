@@ -63,6 +63,11 @@ if [ -f "$FRAG" ]; then
     bad "ksu.fragment 存在但没有 CONFIG_KSU=y"
     sed -n '1,20p' "$FRAG"
   fi
+  if grep -qE '^CONFIG_KSU_DEBUG=y' "$FRAG"; then
+    ok "ksu.fragment 含 CONFIG_KSU_DEBUG=y（绕过 builtin-new 的 -g0，满足 gendwarfksyms）"
+  else
+    bad "ksu.fragment 缺 CONFIG_KSU_DEBUG=y（gendwarfksyms 会因 ksu.o 无调试信息而失败）"
+  fi
 else
   bad "ksu.fragment 不存在: $FRAG"
 fi
