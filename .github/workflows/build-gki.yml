@@ -8,11 +8,6 @@ on:
         required: false
         default: 'main'
         type: string
-      enable_kpm:
-        description: '启用 CONFIG_KPM（KPM 模块支持，可能影响稳定性）'
-        required: false
-        default: false
-        type: boolean
       run_checks:
         description: '启用产物门禁校验（关闭后仅产出不校验）'
         required: false
@@ -109,23 +104,11 @@ jobs:
       - name: 集成 SukiSU-Nova (内置 CONFIG_KSU=y)
         env:
           SUKISU_REF: ${{ inputs.sukisu_ref || 'main' }}
-          ENABLE_KPM: ${{ inputs.enable_kpm || 'false' }}
         run: |
           set -euxo pipefail
           echo "SukiSU ref = ${SUKISU_REF}"
-          echo "enable KPM = ${ENABLE_KPM}"
           chmod +x scripts/integrate_sukisu.sh
           ./scripts/integrate_sukisu.sh "${KERNEL_PLATFORM}" "${SUKISU_REF}"
-
-          # 若勾选了启用 KPM，追加 CONFIG_KPM=y 到 fragment
-          if [ "${ENABLE_KPM}" = "true" ]; then
-            FRAG="${KERNEL_PLATFORM}/common/arch/arm64/configs/ksu.fragment"
-            grep -q '^CONFIG_KPM=y' "$FRAG" || echo 'CONFIG_KPM=y' >> "$FRAG"
-            echo "=== fragment 内容 ==="
-            cat "$FRAG"
-            grep -q '^CONFIG_KPM=y' "$FRAG" || { echo "::error::CONFIG_KPM 未写入 fragment"; exit 1; }
-            echo "==> 已启用 CONFIG_KPM=y"
-          fi
 
       - name: 编译 GKI 内核 (kleaf, 只编需要的 target)
         run: |
