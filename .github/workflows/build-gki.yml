@@ -24,6 +24,14 @@ on:
         options:
           - '启用 SUSFS'
           - '不启用'
+      enable_kpm:
+        description: 'KPM (KernelPatch 后加机制)'
+        required: false
+        default: '启用 KPM'
+        type: choice
+        options:
+          - '启用 KPM'
+          - '不启用'
 concurrency:
   group: gki-build
   cancel-in-progress: false
@@ -253,6 +261,26 @@ jobs:
           [ "$MAGIC" = "644d5241" ] || { echo "::error::Image 头 magic 不是 644d5241，产物不对"; exit 1; }
           strings -a "$D/Image" 2>/dev/null | grep -m1 '^Linux version' || echo "::warning::Image 里没找到 Linux version 串"
           ls -la "$D"
+
+      - name: 集成 KernelPatch (KPM 后加机制)
+        if: ${{ github.event.inputs.enable_kpm == '启用 KPM' }}
+        run: |
+          set -uo pipefail
+          # kpimg 是 freestanding 裸机 ELF，必须 aarch64-none-elf 裸机交叉编译器
+          # （不能用 gcc-aarch64-linux-gnu 代替）。apt 无此包，从 ARM 官方下载，
+          # 只在 enable_kpm=true 时才下载，默认构建不白下载几百 MB。
+          ARM_TC_VER="14.3.rel1"
+          ARM_TC_DIR="/opt/arm-gnu-toolchain-${ARM_TC_VER}-x86_64-aarch64-none-elf"
+          if [ ! -x "${ARM_TC_DIR}/bin/aarch64-none-elf-gcc" ]; then
+            curl -fsSL "https://developer.arm.com/-/media/Files/downloads/gnu/${ARM_TC_VER}/binrel/arm-gnu-toolchain-${ARM_TC_VER}-x86_64-aarch64-none-elf.tar.xz" -o /tmp/arm-gnu-toolchain.tar.xz
+            sudo mkdir -p /opt
+            sudo tar -xJf /tmp/arm-gnu-toolchain.tar.xz -C /opt
+            rm -f /tmp/arm-gnu-toolchain.tar.xz
+          fi
+          export PATH="${ARM_TC_DIR}/bin:$PATH"
+          aarch64-none-elf-gcc --version | head -1
+          chmod +x scripts/integrate_kernelpatch.sh
+          ./scripts/integrate_kernelpatch.sh "$KERNEL_PLATFORM" "$GITHUB_WORKSPACE/dist/Image"
 
       - name: 打包 AnyKernel3 刷机包
         run: |
