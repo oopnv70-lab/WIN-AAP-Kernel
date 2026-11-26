@@ -9,10 +9,13 @@ on:
         default: 'main'
         type: string
       builtin_manager:
-        description: '内置管理器（KSU）——取消勾选则跳过集成，编译出的内核不带 root'
+        description: '内置管理器'
         required: false
-        default: true
-        type: boolean
+        default: '内置管理器'
+        type: choice
+        options:
+          - '内置管理器'
+          - '不内置'
 
 concurrency:
   group: gki-build
@@ -102,7 +105,7 @@ jobs:
           grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${KERNEL_PLATFORM}/common/Makefile"
 
       - name: 集成 SukiSU-Nova (内置 CONFIG_KSU=y)
-        if: ${{ inputs.builtin_manager != false }}
+        if: ${{ inputs.builtin_manager == '内置管理器' }}
         env:
           SUKISU_REF: ${{ inputs.sukisu_ref || 'main' }}
         run: |
