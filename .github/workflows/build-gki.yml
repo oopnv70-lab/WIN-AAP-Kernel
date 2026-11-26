@@ -76,24 +76,40 @@ jobs:
           git config --global user.name  "github-actions"
           git config --global user.email "github-actions@github.com"
           repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1 --no-repo-verify
-          # 采样：判断 repo sync 瓶颈是 CPU 打满还是并发不足
+          # 采样：区分「CPU 打满」「等磁盘 IO」「等网络」三种瓶颈
+          # cpu  = 用户+系统 CPU 占比
+          # iow  = iowait 占比（高 → 瓶颈在磁盘，加并发无用）
+          # run  = /proc/stat 里 procs_running（真实并发进程数）
+          # load = 1 分钟平均负载
           (
             while :; do
-              C=$(awk '/^cpu /{u=$2+$4;t=$2+$4+$5;if(t>0)printf "%.0f", u*100/t}' /proc/stat)
-              L=$(cut -d" " -f1-3 /proc/loadavg)
-              echo "t=${SECONDS}s cpu=${C}% load=[${L}]"
+              read -r C IOW RUN < <(awk '
+                /^cpu /{u=$2+$4; t=$2+$3+$4+$5+$6+$7+$8; if(t>0) c=u*100/t; iw=$6*100/t}
+                /^procs_running/{r=$2}
+                END{printf "%.0f %.0f %d\n", c, iw, r}' /proc/stat)
+              L=$(cut -d" " -f1 /proc/loadavg)
+              echo "t=${SECONDS}s cpu=${C}% iowait=${IOW}% run=${RUN} load1=${L}"
               sleep 5
             done
           ) > "$GITHUB_WORKSPACE/sync-monitor.log" 2>&1 &
           MON=$!
           T0=$(date +%s)
-          repo sync -c --no-tags --optimized-fetch -j12 --force-sync || { kill $MON 2>/dev/null || true; echo "::error::repo sync 失败"; exit 1; }
+          repo sync -c --no-tags --optimized-fetch -j16 --force-sync || { kill $MON 2>/dev/null || true; echo "::error::repo sync 失败"; exit 1; }
           T1=$(date +%s)
           kill $MON 2>/dev/null || true
           wait $MON 2>/dev/null || true
           echo "=== repo sync 耗时 $((T1-T0))s ==="
-          echo "--- 采样尾部 ---"
+          echo "--- 采样汇总（判定瓶颈用）---"
+          # 字段布局: $1=t $2=<n>s $3=cpu $4=<n> $5=iowait $6=<n> $7=run $8=<n> $9=load1 $10=<x>
+          awk -F'[= %]+' '/cpu=/{c+=$4; i+=$6; r+=$8; n++; if($4>mc)mc=$4; if($6>mi)mi=$6; if($8>mr)mr=$8}
+            END{if(n>0) printf "avg_cpu=%.0f%% max_cpu=%.0f%% | avg_iowait=%.0f%% max_iowait=%.0f%% | avg_run=%.1f max_run=%d | samples=%d\n", c/n,mc,i/n,mi,r/n,mr,n}' \
+            "$GITHUB_WORKSPACE/sync-monitor.log" || true
+          echo "--- 采样尾部 20 行 ---"
           tail -20 "$GITHUB_WORKSPACE/sync-monitor.log"
+          echo "--- 并发度解读 ---"
+          echo "nproc=$(nproc)  并发参数=-j16"
+          echo "若 avg_run 远小于 16 且 avg_iowait 高 → 瓶颈在磁盘/网络，加并发无效"
+          echo "若 avg_cpu 接近 nproc*100 → CPU 打满，加并发反而更差"
 
       - name: 覆盖荣耀内核源码
         run: |
