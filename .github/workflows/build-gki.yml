@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       sukisu_ref:
-        description: 'SukiSU-Nova 分支/tag/commit（必须用 builtin：main 分支无 SUSFS 符号）'
+        description: 'SukiSU-Nova 分支/tag/commit（必须用 builtin-new：builtin 在 6.12 上 LSM API 编译失败，main 无 SUSFS 符号）'
         required: false
-        default: 'builtin'
+        default: 'builtin-new'
         type: string
       builtin_manager:
         description: '内置管理器'
@@ -145,7 +145,7 @@ jobs:
       - name: 集成 SukiSU-Nova (内置 CONFIG_KSU=y)
         if: ${{ inputs.builtin_manager == '内置管理器' }}
         env:
-          SUKISU_REF: ${{ inputs.sukisu_ref || 'main' }}
+          SUKISU_REF: ${{ inputs.sukisu_ref || 'builtin-new' }}
           ENABLE_SUSFS: ${{ inputs.enable_susfs == '启用 SUSFS' && 'true' || 'false' }}
         run: |
           set -euxo pipefail

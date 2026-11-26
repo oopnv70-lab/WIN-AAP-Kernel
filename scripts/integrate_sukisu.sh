@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
-# 集成 SukiSU-Nova（builtin 分支，CONFIG_KSU=y 内置）到荣耀 GKI 内核树（android16-6.12 / kleaf）。
+# 集成 SukiSU-Nova（builtin-new 分支，CONFIG_KSU=y 内置）到荣耀 GKI 内核树（android16-6.12 / kleaf）。
 # 用法：integrate_sukisu.sh <KERNEL_PLATFORM> [SUKISU_REF]
 #   KERNEL_PLATFORM —— 含 common/ 的内核工程根（即 kp/）
-#   SUKISU_REF      —— SukiSU-Nova 分支/tag/commit，默认 builtin
+#   SUKISU_REF      —— SukiSU-Nova 分支/tag/commit，默认 builtin-new
 #
-# 为什么必须是 builtin 分支而不是 main：
+# 为什么从 builtin 换成 builtin-new（2026-11-26 实测）：
+#   builtin 分支的 kernel/hook/lsm_hook.c:192 调用
+#     security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");
+#   而 6.12 起该函数第三参数从 const char * 改为 const struct lsm_id *，
+#   编译直接报 incompatible pointer types passing 'char[4]'，且 builtin 分支
+#   没有任何 Kconfig 开关能绕开（ksu_main.c 直接 #include 了 lsm_hook.c）。
+#   builtin-new 全仓 security_add_hooks 出现次数为 0：6.8+ 改用 arm64 bl 指令
+#   改写（branch-link hook）挂 LSM，代码里有 4 处显式 6.12 版本分支，
+#   INTERNAL.md 声明支持 k3.0 ~ mainline(7.2)，且持续 sync Upstream。
+#
+# 为什么不能是 main：
 #   main（=dev）的 kernel/Kconfig 只有 64 行，只有 KSU/KSU_DEBUG/KSU_MANUAL_SU/KPM/
 #   KSU_DISABLE_MANAGER/KSU_DISABLE_POLICY/KSU_X86_PATCH_SYSCALL_DISPATCHER，
 #   全树没有任何 susfs 字样 —— 没有 CONFIG_KSU_SUSFS 这个符号，也没有
 #   kernel/extension/susfs_extension.c。若在 main 上写 CONFIG_KSU_SUSFS=y，
 #   Kconfig 里该符号不存在，kleaf 的配置校验会报
 #   「CONFIG_KSU_SUSFS: actual '', expected 'y'」并中止构建（实测已发生一次）。
-#   builtin 分支：kernel/Kconfig 137 行、含 KSU_SUSFS 及 10 个子项，
-#   有 kernel/extension/susfs_extension.c，且 kernel/Makefile 里明确写了
-#   「As we are building gki only」与 6.12 的 $(src) 绝对路径 workaround。
+#   builtin 分支：kernel/Kconfig 137 行、含 KSU_SUSFS 及 10 个子项；
+#   builtin-new 分支：Kconfig 259 行、含 KSU_SUSFS 及 11 个子项（另有 INLINE_HOOK）。
+#   两者都有 kernel/extension/susfs_extension.c。但 builtin 因 6.12 LSM API 不可用，
+#   本项目固定用 builtin-new。
 #
 # 路线依据（SukiSU-Nova 官方集成文档）：
 #   - main 分支：kprobes/kretprobes/tracepoint 运行时注册，不需要改内核源码（不手动 hook）。
@@ -28,7 +39,7 @@
 set -euo pipefail
 
 ROOT="${1:-}"
-SUKISU_REF="${2:-builtin}"
+SUKISU_REF="${2:-builtin-new}"
 if [ -z "$ROOT" ]; then
   echo "::error::用法: $0 <KERNEL_PLATFORM> [SUKISU_REF]" >&2
   exit 1
@@ -112,11 +123,12 @@ cat > "$FRAGMENT" <<'EOF'
 # post_defconfig_fragments 注入，不直接改 gki_defconfig（Kleaf minimized 校验要求本体干净）。
 CONFIG_KSU=y
 EOF
-# 若启用 SUSFS，追加其 11 个配置项（Kconfig 中均为 default y，但显式写更稳妥）
+# 若启用 SUSFS，追加其 12 个配置项（Kconfig 中均为 default y，但显式写更稳妥）
 if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
   cat >> "$FRAGMENT" <<'EOF'
 # ---- SUSFS ----
 CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_INLINE_HOOK=y
 CONFIG_KSU_SUSFS_SUS_PATH=y
 CONFIG_KSU_SUSFS_SUS_MOUNT=y
 CONFIG_KSU_SUSFS_SUS_KSTAT=y
@@ -128,7 +140,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 CONFIG_KSU_SUSFS_SUS_MAP=y
 CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y
 EOF
-  echo "==> 已在 fragment 中启用 SUSFS 11 项"
+  echo "==> 已在 fragment 中启用 SUSFS 12 项"
 fi
 echo "==> 已生成 fragment: $FRAGMENT"
 cat "$FRAGMENT"
@@ -195,5 +207,22 @@ if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
     echo "  ✗ 缺 extension/susfs_extension.c —— 该分支无 SUSFS 集成代码，终止"
     exit 1
   fi
+  if grep -q '^config KSU_SUSFS_INLINE_HOOK$' "$DRI/kernelsu/Kconfig"; then
+    echo "  ✓ 该分支 Kconfig 定义 config KSU_SUSFS_INLINE_HOOK"
+  else
+    echo "  ✗ 该分支缺 KSU_SUSFS_INLINE_HOOK —— 不是 builtin-new 布局，SUSFS 后端不可用，终止"
+    exit 1
+  fi
+fi
+
+# 6.12 LSM API 硬门禁：security_add_hooks() 的第三参数在 6.12 起由
+# const char * 改为 const struct lsm_id *。只拒绝「第三参数是字符串字面量」
+# 的旧写法（builtin 分支即此写法，实测报 incompatible pointer types
+# passing 'char[4]'），不禁止未来正确的 lsm_id 用法。
+if python3 "$(dirname "$0")/check_lsm_api.py" "$DRI/kernelsu"; then
+  echo "  ✓ LSM API 检查通过"
+else
+  echo "::error::该分支在 6.12 上存在 security_add_hooks 字符串参数，必然编译失败"
+  exit 1
 fi
 echo "==> SukiSU-Nova 集成完成（$SUKISU_REF 分支，CONFIG_KSU=y 内置，包名=$PKG_NAME）"

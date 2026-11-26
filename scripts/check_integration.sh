@@ -99,7 +99,8 @@ elif [ -f "$DRI/kernelsu/Makefile" ]; then
   PKG_SRC="$DRI/kernelsu/Makefile"
 fi
 if [ -n "$PKG_SRC" ]; then
-  PN=$(grep -E 'KSU_PACKAGE_NAME[[:space:]]*\?=' "$PKG_SRC" 2>/dev/null | head -1 | sed 's/.*=[[:space:]]*//')
+  # 兼容 main 的 ?= 与 builtin/builtin-new 的 :=
+  PN=$(grep -E 'KSU_PACKAGE_NAME[[:space:]]*[?:]?=' "$PKG_SRC" 2>/dev/null | head -1 | sed 's/.*=[[:space:]]*//')
   if [ -n "$PN" ]; then
     echo "    $(basename "$PKG_SRC") 中默认包名 = $PN"
     case "$PN" in
@@ -107,7 +108,7 @@ if [ -n "$PKG_SRC" ]; then
       *) bad "包名异常: $PN（期望 com.sukisu.nova）" ;;
     esac
   else
-    echo "    ::warning::$(basename "$PKG_SRC") 未找到 KSU_PACKAGE_NAME ?= 行（可能定义在别处，非致命）"
+    echo "    ::warning::$(basename "$PKG_SRC") 未找到 KSU_PACKAGE_NAME 行（可能定义在别处，非致命）"
   fi
 else
   bad "drivers/kernelsu 下既无 Kbuild 也无 Makefile"
@@ -127,6 +128,11 @@ if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
     ok "KSU 侧 susfs_extension.c 存在"
   else
     bad "KSU 侧缺 extension/susfs_extension.c（该分支无 SUSFS 集成代码）"
+  fi
+  if grep -q '^config KSU_SUSFS_INLINE_HOOK$' "$DRI/kernelsu/Kconfig" 2>/dev/null; then
+    ok "KSU Kconfig 定义 config KSU_SUSFS_INLINE_HOOK（builtin-new 布局）"
+  else
+    bad "KSU Kconfig 缺 config KSU_SUSFS_INLINE_HOOK（不是 builtin-new 布局，SUSFS 后端不可用）"
   fi
   for f in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h; do
     if [ -f "$COMMON/$f" ]; then ok "$f 存在"; else bad "$f 缺失"; fi
@@ -163,13 +169,13 @@ if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
   fi
   # fragment 里的 SUSFS 开关
   MISS=0
-  for c in CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT \
+  for c in CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_INLINE_HOOK CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT \
            CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_KSU_SUSFS_ENABLE_LOG \
            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
            CONFIG_KSU_SUSFS_OPEN_REDIRECT CONFIG_KSU_SUSFS_SUS_MAP CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER; do
     grep -qE "^${c}=y" "$FRAG" 2>/dev/null || { bad "fragment 缺 ${c}=y"; MISS=$((MISS+1)); }
   done
-  [ "$MISS" -eq 0 ] && ok "fragment 含全部 11 项 CONFIG_KSU_SUSFS*=y"
+  [ "$MISS" -eq 0 ] && ok "fragment 含全部 12 项 CONFIG_KSU_SUSFS*=y"
   # 符号定义 vs 引用双向核对
   SYMC="$(dirname "$0")/check_susfs_symbols.py"
   if [ -f "$SYMC" ]; then
@@ -183,6 +189,22 @@ if [ "${ENABLE_SUSFS:-false}" = "true" ]; then
   else
     bad "check_susfs_symbols.py 不存在"
   fi
+fi
+
+# ---------- 8) 6.12 LSM API 兼容性 ----------
+# security_add_hooks() 第三参数在 6.12 起由 const char * 改为 const struct lsm_id *。
+# builtin 分支传字符串 "ksu"，实测编译报 incompatible pointer types passing 'char[4]'。
+echo "[8] 6.12 LSM API 兼容性"
+LSMC="$(dirname "$0")/check_lsm_api.py"
+if [ -f "$LSMC" ]; then
+  if python3 "$LSMC" "$DRI/kernelsu" > /tmp/lsm_api.log 2>&1; then
+    ok "$(cat /tmp/lsm_api.log)"
+  else
+    bad "security_add_hooks() 存在 6.12 不兼容的字符串第三参数"
+    sed 's/^/    /' /tmp/lsm_api.log
+  fi
+else
+  bad "check_lsm_api.py 不存在"
 fi
 
 echo "==== 门禁A 结果 ===="
