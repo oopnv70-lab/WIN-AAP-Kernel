@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 集成 SukiSU-Nova（main 分支，CONFIG_KSU=y 内置）到荣耀 GKI 内核树（android16-6.12 / kleaf）。
-# 用法：integrate_sukisu.sh <KERNEL_PLATFORM>
+# 用法：integrate_sukisu.sh <KERNEL_PLATFORM> [SUKISU_REF]
 #   KERNEL_PLATFORM —— 含 common/ 的内核工程根（即 kp/）
+#   SUKISU_REF      —— SukiSU-Nova 分支/tag/commit，默认 main
 #
 # 路线依据（SukiSU-Nova 官方集成文档）：
 #   - main 分支：kprobes/kretprobes/tracepoint 运行时注册，不需要改内核源码（不手动 hook）。
@@ -16,8 +17,9 @@
 set -euo pipefail
 
 ROOT="${1:-}"
+SUKISU_REF="${2:-main}"
 if [ -z "$ROOT" ]; then
-  echo "::error::用法: $0 <KERNEL_PLATFORM>" >&2
+  echo "::error::用法: $0 <KERNEL_PLATFORM> [SUKISU_REF]" >&2
   exit 1
 fi
 
@@ -32,6 +34,7 @@ FRAGMENT="${COMMON}/arch/arm64/configs/ksu.fragment"
 PKG_NAME="com.sukisu.nova"
 
 echo "==> KERNEL_PLATFORM = $ROOT"
+echo "==> SukiSU ref = $SUKISU_REF"
 echo "==> 管理器包名 = $PKG_NAME"
 test -d "$COMMON" || { echo "::error::找不到 common/ ($COMMON)"; exit 1; }
 test -d "$DRI" || { echo "::error::找不到 drivers/ ($DRI)"; exit 1; }
@@ -40,8 +43,16 @@ test -f "$BUILD_BAZEL" || { echo "::error::找不到 common/BUILD.bazel ($BUILD_
 # ============ A. 内核源码侧：clone + 软链 + Makefile/Kconfig 注入 ============
 # A1) clone SukiSU-Nova（main 分支，GitHub 源）
 if [ ! -d "$ROOT/KernelSU/.git" ]; then
-  echo "==> clone SukiSU-Nova (main)"
-  git clone --depth 1 -b main https://github.com/SukiSU-Nova/SukiSU-Nova.git "$ROOT/KernelSU"
+  echo "==> clone SukiSU-Nova ($SUKISU_REF)"
+  if git clone --depth 1 -b "$SUKISU_REF" https://github.com/SukiSU-Nova/SukiSU-Nova.git "$ROOT/KernelSU" 2>/dev/null; then
+    :
+  else
+    # 不是分支/tag时（如 commit sha），克隆后再切换
+    echo "==> -b $SUKISU_REF 失败，改为按 commit 切换"
+    rm -rf "$ROOT/KernelSU"
+    git clone https://github.com/SukiSU-Nova/SukiSU-Nova.git "$ROOT/KernelSU"
+    git -C "$ROOT/KernelSU" checkout "$SUKISU_REF"
+  fi
 else
   echo "==> KernelSU 已存在，跳过 clone"
 fi
