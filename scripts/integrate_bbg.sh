@@ -41,24 +41,36 @@ test -d "$COMMON" || { echo "::error::找不到 common/ ($COMMON)"; exit 1; }
 test -d "$SECURITY_DIR" || { echo "::error::找不到 security/ ($SECURITY_DIR)"; exit 1; }
 test -f "$BUILD_BAZEL" || { echo "::error::找不到 common/BUILD.bazel ($BUILD_BAZEL)"; exit 1; }
 
-# ============ 1) clone Baseband-guard（锁 commit）============
-if [ ! -d "$BBG_DIR/.git" ]; then
-  echo "==> clone Baseband-guard ($BBG_REF)"
-  rm -rf "$BBG_DIR"
-  # git clone -b 只接受分支/tag，对裸 commit sha 必然失败（BBG_REF 恒为 sha）。
-  # 只保留一条经过实测验证的正确路径：浅克隆 + fetch 指定 sha + checkout。
-  git clone --depth 1 "$BBG_REPO" "$BBG_DIR"
-  git -C "$BBG_DIR" fetch --depth 1 origin "$BBG_REF"
-  git -C "$BBG_DIR" checkout "$BBG_REF"
-  # 锁定校验：checkout 后 HEAD 必须等于目标 sha
-  HEAD_SHA=$(git -C "$BBG_DIR" rev-parse HEAD)
-  [ "$HEAD_SHA" = "$BBG_REF" ] \
-    || { echo "::error::Baseband-guard checkout 后 HEAD ($HEAD_SHA) != 目标 ($BBG_REF)"; exit 1; }
+# ============ 1) 下载 Baseband-guard（直接下载指定 commit，锁 commit）============
+if [ ! -d "$BBG_DIR" ] || [ ! -f "$BBG_DIR/baseband_guard.c" ]; then
+  echo "==> 下载 Baseband-guard ($BBG_REF)"
+  rm -rf "$BBG_DIR" "$COMMON/Baseband-guard-${BBG_REF}"
+  # 主路径：archive tarball 直接下载——一条命令拿到指定 sha 的源码，天然锁定 commit。
+  #（git clone -b 只接受分支/tag、对裸 sha 必然失败，不再作为主路径）
+  if curl -fsSL "https://github.com/vc-teahouse/Baseband-guard/archive/${BBG_REF}.tar.gz" | tar xz -C "$COMMON"; then
+    mv "$COMMON/Baseband-guard-${BBG_REF}" "$BBG_DIR"
+    echo "  ✓ 直接下载成功（archive tarball @ $BBG_REF）"
+  else
+    # 兜底（不常用）：git 浅克隆 + fetch 指定 sha + checkout
+    echo "==> 直接下载失败，git 浅克隆兜底"
+    git clone --depth 1 "$BBG_REPO" "$BBG_DIR"
+    git -C "$BBG_DIR" fetch --depth 1 origin "$BBG_REF"
+    git -C "$BBG_DIR" checkout "$BBG_REF"
+    HEAD_SHA=$(git -C "$BBG_DIR" rev-parse HEAD)
+    [ "$HEAD_SHA" = "$BBG_REF" ] \
+      || { echo "::error::git 兜底 checkout 后 HEAD ($HEAD_SHA) != 目标 ($BBG_REF)"; exit 1; }
+  fi
+  # 锁定校验：关键文件必须在位
+  test -f "$BBG_DIR/baseband_guard.c" || { echo "::error::Baseband-guard 下载后缺 baseband_guard.c"; exit 1; }
 else
-  echo "==> Baseband-guard 已存在，跳过 clone"
+  echo "==> Baseband-guard 已存在，跳过下载"
 fi
 test -f "$BBG_DIR/LICENSE" || { echo "::error::Baseband-guard/LICENSE 不存在"; exit 1; }
-echo "    版本: $(cd "$BBG_DIR" && git log -1 --format='%h %s' 2>/dev/null)"
+if [ -d "$BBG_DIR/.git" ]; then
+  echo "    版本: $(git -C "$BBG_DIR" log -1 --format='%h %s' 2>/dev/null)"
+else
+  echo "    版本: $BBG_REF（archive tarball 直接下载）"
+fi
 
 # ============ 2) 许可证核验（GPL-2.0）============
 if head -3 "$BBG_DIR/LICENSE" | grep -q "GNU GENERAL PUBLIC LICENSE" \
