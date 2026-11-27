@@ -1,0 +1,240 @@
+name: Pack Patched Source (AAP-AN00)
+
+on:
+  workflow_dispatch:
+    inputs:
+      sukisu_ref:
+        description: 'SukiSU-Nova 分支/tag/commit（默认锁 builtin-new @ 5a3ec414；builtin 在 6.12 上 LSM API 编译失败，main 无 SUSFS 符号）'
+        required: false
+        default: '5a3ec4145059ed2c4f22c70a16a28a616e104c33'
+        type: string
+      builtin_manager:
+        description: '内置管理器'
+        required: false
+        default: '内置管理器'
+        type: choice
+        options:
+          - '内置管理器'
+          - '不内置'
+      enable_susfs:
+        description: 'SUSFS'
+        required: false
+        default: '启用 SUSFS'
+        type: choice
+        options:
+          - '启用 SUSFS'
+          - '不启用'
+      enable_kpm:
+        description: 'KPM (KernelPatch 后加机制)'
+        required: false
+        default: '启用 KPM'
+        type: choice
+        options:
+          - '启用 KPM'
+          - '不启用'
+      enable_bbg:
+        description: 'BBG 防格机 (Baseband-guard LSM)'
+        required: false
+        default: '启用 BBG'
+        type: choice
+        options:
+          - '启用 BBG'
+          - '不启用'
+      superkey:
+        description: 'KernelPatch superkey（KPM 解锁密钥；留空则随机生成并打印到构建摘要）'
+        required: false
+        default: ''
+        type: string
+concurrency:
+  group: pack-source
+  cancel-in-progress: false
+
+env:
+  MODEL: AAP-AN00
+  BRANCH: common-android16-6.12
+  KERNEL_PLATFORM: ${{ github.workspace }}/kp
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: 拉取配方仓库
+        uses: actions/checkout@v4
+
+      - name: 清理磁盘空间
+        run: |
+          set -euxo pipefail
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      /usr/lib/jvm /usr/local/.ghcup || true
+          sudo apt-get clean
+          df -h /
+
+      - name: 安装构建依赖
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            git-core gnupg flex bison build-essential zip unzip curl zlib1g-dev \
+            libc6-dev libncurses-dev libssl-dev libelf-dev bc cpio rsync \
+            python3 python3-pip dwarves lz4 device-tree-compiler ccache \
+            file libarchive-tools libxml2-utils aria2
+
+      - name: 安装 repo 同步工具
+        run: |
+          set -euxo pipefail
+          mkdir -p ~/bin
+          curl -fsSL https://raw.githubusercontent.com/GerritCodeReview/git-repo/main/repo -o ~/bin/repo
+          chmod +x ~/bin/repo
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: 拉取荣耀开源代码 (动态查询有效链接)
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/fetch_honor_source.sh
+          ./scripts/fetch_honor_source.sh "${MODEL}" "${GITHUB_WORKSPACE}/honor_src"
+          du -sh "${GITHUB_WORKSPACE}/honor_src/Code_Opensource" || true
+
+      - name: 盘点荣耀源码许可证（合规留痕）
+        run: |
+          set -uo pipefail
+          chmod +x scripts/audit_licenses.sh
+          ./scripts/audit_licenses.sh "${GITHUB_WORKSPACE}/honor_src/Code_Opensource" | tee "${GITHUB_WORKSPACE}/license-audit.log"
+
+      - name: 同步 AOSP 内核基础工程
+        run: |
+          set -euxo pipefail
+          mkdir -p "$KERNEL_PLATFORM" && cd "$KERNEL_PLATFORM"
+          git config --global user.name  "github-actions"
+          git config --global user.email "github-actions@github.com"
+          repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1 --no-repo-verify
+          # 采样：区分「CPU 打满」「等磁盘 IO」「等网络」三种瓶颈
+          # cpu  = 用户+系统 CPU 占比
+          # iow  = iowait 占比（高 → 瓶颈在磁盘，加并发无用）
+          # run  = /proc/stat 里 procs_running（真实并发进程数）
+          # load = 1 分钟平均负载
+          (
+            # 关闭 xtrace：否则 `+ echo 't=..s cpu=..% ..'` 这类追迹行会被一起写进采样文件，
+            # 其中含 "cpu="，awk 会把它当样本、$4 取到 "533s" 被数值化成 533 累加进 cpu，
+            # 导致 avg 被拉爆（历史日志出现过 avg_cpu=140% > max_cpu=98% 的自相矛盾）。
+            { set +x; } 2>/dev/null
+            while :; do
+              read -r C IOW RUN < <(awk '
+                /^cpu /{u=$2+$4; t=$2+$3+$4+$5+$6+$7+$8; if(t>0) c=u*100/t; iw=$6*100/t}
+                /^procs_running/{r=$2}
+                END{printf "%.0f %.0f %d\n", c, iw, r}' /proc/stat)
+              L=$(cut -d" " -f1 /proc/loadavg)
+              echo "t=${SECONDS}s cpu=${C}% iowait=${IOW}% run=${RUN} load1=${L}"
+              sleep 5
+            done
+          ) > "$GITHUB_WORKSPACE/sync-monitor.log" 2>&1 &
+          MON=$!
+          T0=$(date +%s)
+          # 并发实测（同一 runner）：-j4=453s、-j12=396s（最优）、-j16=538s。
+          # 4 核机上 16 路并发会在 index-pack 解包阶段把 CPU 打满（实测 max_cpu=98%），
+          # 解包跟不上导致读管道背压、TCP 窗口收缩，吞吐反而从 72MB/s 掉到 53MB/s。
+          # 故固定在 -j12，不要再往上加。
+          repo sync -c --no-tags --optimized-fetch -j12 --force-sync || { kill $MON 2>/dev/null || true; echo "::error::repo sync 失败"; exit 1; }
+          T1=$(date +%s)
+          kill $MON 2>/dev/null || true
+          wait $MON 2>/dev/null || true
+          echo "=== repo sync 耗时 $((T1-T0))s ==="
+          echo "--- 采样汇总（判定瓶颈用）---"
+          # 字段布局: $1=t $2=<n>s $3=cpu $4=<n> $5=iowait $6=<n> $7=run $8=<n> $9=load1 $10=<x>
+          awk -F'[= %]+' '/cpu=/{c+=$4; i+=$6; r+=$8; n++; if($4>mc)mc=$4; if($6>mi)mi=$6; if($8>mr)mr=$8}
+            END{if(n>0) printf "avg_cpu=%.0f%% max_cpu=%.0f%% | avg_iowait=%.0f%% max_iowait=%.0f%% | avg_run=%.1f max_run=%d | samples=%d\n", c/n,mc,i/n,mi,r/n,mr,n}' \
+            "$GITHUB_WORKSPACE/sync-monitor.log" || true
+          echo "--- 采样尾部 20 行 ---"
+          tail -20 "$GITHUB_WORKSPACE/sync-monitor.log"
+          echo "--- 并发度解读 ---"
+          echo "nproc=$(nproc)  并发参数=-j12"
+          echo "若 avg_run 远小于 12 且 avg_iowait 高 → 瓶颈在磁盘/网络，加并发无效"
+          echo "若 avg_cpu 接近 nproc*100 → CPU 打满，加并发反而更差"
+          # 实测同步总量：用于计算真实平均速率（GB/s），是判断「网络慢还是数据多」的唯一硬依据
+          echo "=== 同步后体积（du -sh）==="
+          du -sh "$KERNEL_PLATFORM" || true
+          echo "=== 分项体积（前 10 大）==="
+          du -sh "$KERNEL_PLATFORM"/* 2>/dev/null | sort -rh | head -10 || true
+          echo "=== 磁盘 ==="
+          df -h /
+
+      - name: 覆盖荣耀内核源码
+        run: |
+          set -euxo pipefail
+          SRC="${GITHUB_WORKSPACE}/honor_src/Code_Opensource"
+          test -d "${SRC}/kernel" || { echo "::error::找不到荣耀 kernel 目录"; exit 1; }
+          rsync -a --delete --exclude='.git' "${SRC}/kernel/" "${KERNEL_PLATFORM}/common/"
+          echo "=== 覆盖后内核版本 ==="
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${KERNEL_PLATFORM}/common/Makefile"
+          echo "=== 荣耀定制关键文件存在性校验（防止开源包不完整被 --delete 静默删掉）==="
+          for f in \
+            BUILD.bazel \
+            arch/arm64/configs/gki_defconfig \
+            arch/arm64/configs/ogki.fragment \
+            gki/aarch64/abi.stg \
+            gki/aarch64/symbols/base \
+            gki/aarch64/symbols/honor \
+            gki/aarch64/symbols/qcom ; do
+            test -f "${KERNEL_PLATFORM}/common/$f" \
+              || { echo "::error::荣耀覆盖后缺关键文件 $f（开源包可能不完整，rsync --delete 误删）"; exit 1; }
+          done
+          echo "✓ 荣耀定制关键文件全部在位"
+
+      - name: 集成 Baseband-guard (防格机 LSM)
+        if: ${{ inputs.enable_bbg == '启用 BBG' }}
+        env:
+          BBG_REF: 48d9fdea643bcb41d204541400e9d8656b97a54f
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/integrate_bbg.sh
+          ./scripts/integrate_bbg.sh "${KERNEL_PLATFORM}" "${BBG_REF}"
+
+      - name: 集成 SukiSU-Nova (内置 CONFIG_KSU=y)
+        if: ${{ inputs.builtin_manager == '内置管理器' }}
+        env:
+          SUKISU_REF: ${{ inputs.sukisu_ref || '5a3ec4145059ed2c4f22c70a16a28a616e104c33' }}
+          ENABLE_SUSFS: ${{ inputs.enable_susfs == '启用 SUSFS' && 'true' || 'false' }}
+          ENABLE_KPM: ${{ inputs.enable_kpm == '启用 KPM' && 'true' || 'false' }}
+        run: |
+          set -euxo pipefail
+          echo "SukiSU ref = ${SUKISU_REF}"
+          chmod +x scripts/integrate_sukisu.sh
+          ./scripts/integrate_sukisu.sh "${KERNEL_PLATFORM}" "${SUKISU_REF}"
+
+      - name: 集成 SUSFS (susfs4ksu gki-android16-6.12)
+        if: ${{ inputs.builtin_manager == '内置管理器' && inputs.enable_susfs == '启用 SUSFS' }}
+        env:
+          SUSFS_REF: 9b0b13f069673b9b07b713a5c66977de4d62b175
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/integrate_susfs.sh scripts/shim_susfs_task_mmu.py scripts/check_susfs_symbols.py
+          ./scripts/integrate_susfs.sh "${KERNEL_PLATFORM}" "${SUSFS_REF}"
+
+      - name: 门禁A · 编译前校验集成结果
+        if: ${{ inputs.builtin_manager == '内置管理器' }}
+        run: |
+          set -uo pipefail
+          chmod +x scripts/check_integration.sh
+          ./scripts/check_integration.sh "${KERNEL_PLATFORM}"
+
+      - name: 打包补丁后完整源码（与真实构建编译的树一致，仅跳过编译）
+        run: |
+          set -euxo pipefail
+          cd "$GITHUB_WORKSPACE"
+          OUT="patched-source-${MODEL}-r${GITHUB_RUN_NUMBER}.tar.gz"
+          # 只排除 .git/.repo 版本库元数据（体积大头），全部源码文件保留
+          tar --exclude='.git' --exclude='.repo' -czf "$OUT" kp
+          ls -lh "$OUT"
+          echo '=== 抽查：common/Makefile 是否在包里 ==='
+          tar -tzf "$OUT" | grep -m3 '^kp/common/Makefile$' || true
+
+      - name: 上传补丁后源码
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: patched-source-r${{ github.run_number }}
+          path: patched-source-*.tar.gz
+          if-no-files-found: warn
+          retention-days: 14
