@@ -20,18 +20,49 @@ mkdir -p "$DEST"
 WORK=$(mktemp -d)
 
 echo "[*] 查询 $MODEL 的当前有效下载地址 ..."
+
+# ---- 查询接口：带重试（纯 HTTP 查询，偶发一次超时不应打死整个 CI）----
+# 实测（run 46070587307 attempt1，2026-11-27T21:31Z）：第 1 页查询 curl --max-time 60
+# 到期退出 rc=28（CURLE_OPERATION_TIMEDOUT），脚本因 set -e 当场终止；5 分钟后同一
+# 接口同一参数秒回命中第 1 页，随后 aria2 以 31 MiB/s 拉完 618 MB。结论：荣耀接口瞬
+# 时抖动 + 本脚本查询环节零重试（下载环节反而有 --max-tries/--retry）。
+# 故此处：connect-timeout 15（连不上就别空等 60s）+ max-time 60 + 5 次指数退避重试
+# + 每次打印 dns/tcp/tls/ttfb/total 计时，失败直接暴露卡在哪一环，不靠猜。
+API_TRIES=5
+query_page() { # $1 = 页码；成功返回 0，$WORK/p.txt 为响应体；失败返回 1
+  local page="$1" try=1 wait=2 qrc=0
+  while [ "$try" -le "$API_TRIES" ]; do
+    : > "$WORK/p.txt"
+    if curl -sG -A "$UA" "$API" \
+        --connect-timeout 15 --max-time 60 \
+        --data-urlencode 'jsonp=cb' --data-urlencode 'siteCode=worldwide' \
+        --data-urlencode 'regionCode=GB' --data-urlencode "curPage=$page" \
+        --data-urlencode 'pageSize=50' --data-urlencode 'offeringCode=CMCG10000045' \
+        --data-urlencode 'channelCode=10005' --data-urlencode 'countryCode=0' \
+        --data-urlencode 'country=0' --data-urlencode 'langCode=en-gb' \
+        --data-urlencode 'language=en-us' --data-urlencode 'knowledgeTypes=F34' \
+        -o "$WORK/p.txt" \
+        -w "[*] 查询 p=$page try=$try HTTP=%{http_code} dns=%{time_namelookup}s tcp=%{time_connect}s tls=%{time_appconnect}s ttfb=%{time_starttransfer}s total=%{time_total}s\n"; then
+      return 0
+    else
+      qrc=$?
+      echo "[!] 查询接口 p=$page 第 $try/$API_TRIES 次失败 rc=$qrc（28=超时，6/7=解析/连接失败，35=TLS 握手失败）"
+      try=$((try + 1))
+      if [ "$try" -le "$API_TRIES" ]; then
+        echo "    ${wait}s 后重试 ..."
+        sleep "$wait"
+        wait=$((wait * 2))
+      fi
+    fi
+  done
+  return 1
+}
+
 URL=""
 FN=""
 TOTAL="?"
 for p in $(seq 1 10); do
-  curl -sG -A "$UA" --max-time 60 "$API" \
-    --data-urlencode 'jsonp=cb' --data-urlencode 'siteCode=worldwide' \
-    --data-urlencode 'regionCode=GB' --data-urlencode "curPage=$p" \
-    --data-urlencode 'pageSize=50' --data-urlencode 'offeringCode=CMCG10000045' \
-    --data-urlencode 'channelCode=10005' --data-urlencode 'countryCode=0' \
-    --data-urlencode 'country=0' --data-urlencode 'langCode=en-gb' \
-    --data-urlencode 'language=en-us' --data-urlencode 'knowledgeTypes=F34' \
-    -o "$WORK/p.txt"
+  query_page "$p" || { echo "[x] 查询接口连续 $API_TRIES 次失败（非机型不存在，是网络/接口侧问题）"; exit 6; }
   parsed=$(python3 - "$WORK/p.txt" "$MODEL" <<'PY'
 import json,re,sys
 t=open(sys.argv[1],encoding='utf-8',errors='ignore').read()
@@ -62,6 +93,14 @@ PY
 done
 
 [ -z "$URL" ] && { echo "[x] 未找到 $MODEL"; exit 2; }
+
+# 只查地址不下载：QUERY_ONLY=1 时打印当前有效链接后退出（本地/CI 快速验证查询环节用）
+if [ "${QUERY_ONLY:-0}" = "1" ]; then
+  echo "[+] QUERY_ONLY: $FN  ${SZ:-?}KB  发布 ${DT:-?}"
+  echo "[+] URL: $URL"
+  rm -rf "$WORK"
+  exit 0
+fi
 
 # 取会话 cookie（下载接口防盗链校验）
 curl -s -A "$UA" -e "$REFERER" --max-time 30 "$REFERER" -c "$WORK/ck.txt" -o /dev/null || true
