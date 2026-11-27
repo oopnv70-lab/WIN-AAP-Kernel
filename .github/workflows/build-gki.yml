@@ -25,17 +25,17 @@ on:
           - '启用 SUSFS'
           - '不启用'
       enable_kpm:
-        description: 'KPM (KernelPatch 后加机制)'
+        description: 'KPM (KernelPatch 后加机制)｜实测：KP 对本 Image 适配失败（QEMU 启动即 panic），默认关闭'
         required: false
-        default: '启用 KPM'
+        default: '不启用'
         type: choice
         options:
           - '启用 KPM'
           - '不启用'
       enable_bbg:
-        description: 'BBG 防格机 (Baseband-guard LSM)'
+        description: 'BBG 防格机 (Baseband-guard LSM)｜会挤爆 LSM 静态调用槽位（baseband_guard 未登记进 lsm_count.h，挤掉 bpf LSM），暂不可用'
         required: false
-        default: '启用 BBG'
+        default: '不启用'
         type: choice
         options:
           - '启用 BBG'

@@ -118,6 +118,14 @@ grep -q 'patched=true' "$IMAGE.kptools-list.log" \
   || { echo "::error::kptools -l 显示 patched 不为 true，注入未生效"; exit 1; }
 
 # ============ 9) 替换原 Image，供 AnyKernel3 打包 ============
+OUTDIR="$(dirname "$IMAGE")"
+# 保留 kptools 的 patch 明细（patch 点/偏移/patched=true）到 dist，随 artifact 上传。
+# 起因：2026-11-27 24 号包在 QEMU 实机模拟下启动即 panic（cortex-a57/smp4 为
+# setup_command_line 里 strlen(NULL)；-cpu max/smp1 为 jmp 到非法地址
+# ffffff7fc0000000），KP 对 6.12.58-android16-6 这份 Image 的适配失败。
+# 没有 patch 前 Image 做二进制 diff 时，kptools -l 的 patch 清单就是唯一线索。
+cp -f "$IMAGE.kptools-list.log" "$OUTDIR/Image.kptools-list.log" 2>/dev/null || true
+cp -f "$IMAGE.kptools.log"      "$OUTDIR/Image.kptools.log"      2>/dev/null || true
 cp "$OUT" "$IMAGE"
 rm -f "$OUT" "$IMAGE.kptools.log" "$IMAGE.kptools-list.log"
 echo "  ✓ 已用 KP 补丁版 Image 替换原 Image（+$((AFTER-BEFORE)) B）"
