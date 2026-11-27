@@ -212,6 +212,98 @@ else
   bad "check_lsm_api.py 不存在"
 fi
 
+# ---------- 9) LSM 静态调用槽位算术校验 ----------
+# 背景：6.12 起 LSM 走 static call，槽位总数 MAX_LSM_COUNT 来自
+#   include/linux/lsm_count.h 中一张「写死的枚举名单」：
+#   capability/selinux/smack/apparmor/tomoyo/yama/loadpin/lockdown/safesetid/
+#   bpf/landlock/ima/evm/ipe
+# 任何「CONFIG_LSM 里出现 + 实际 =y + 名单里没有」的 LSM，都会在开机时于
+#   security/security.c:221 触发 WARN "<from>: out of LSM static calls!?"
+# 并把排在列表最后的 LSM 静默丢弃（QEMU 长测实证：baseband_guard 曾把 bpf 挤掉）。
+# 本项校验的目的：把这类「静默降级」变成构建期硬失败。
+echo "[9] LSM 静态调用槽位算术校验"
+LSMCOUNT="$COMMON/include/linux/lsm_count.h"
+SEC_KCONFIG="$COMMON/security/Kconfig"
+GKI_DEFCONFIG="$COMMON/arch/arm64/configs/gki_defconfig"
+if [ ! -f "$LSMCOUNT" ] || [ ! -f "$SEC_KCONFIG" ] || [ ! -f "$GKI_DEFCONFIG" ]; then
+  bad "缺少 lsm_count.h / security/Kconfig / gki_defconfig，无法做 LSM 槽位校验"
+else
+  # LSM 名 → Kconfig 符号（与 lsm_count.h 的 IS_ENABLED 宏一一对应）
+  lsm_sym() {
+    case "$1" in
+      capability)    echo CONFIG_SECURITY ;;
+      selinux)       echo CONFIG_SECURITY_SELINUX ;;
+      smack)         echo CONFIG_SECURITY_SMACK ;;
+      apparmor)      echo CONFIG_SECURITY_APPARMOR ;;
+      tomoyo)        echo CONFIG_SECURITY_TOMOYO ;;
+      yama)          echo CONFIG_SECURITY_YAMA ;;
+      loadpin)       echo CONFIG_SECURITY_LOADPIN ;;
+      lockdown)      echo CONFIG_SECURITY_LOCKDOWN_LSM ;;
+      safesetid)     echo CONFIG_SECURITY_SAFESETID ;;
+      bpf)           echo CONFIG_BPF_LSM ;;
+      landlock)      echo CONFIG_SECURITY_LANDLOCK ;;
+      integrity|ima) echo CONFIG_IMA ;;
+      evm)           echo CONFIG_EVM ;;
+      ipe)           echo CONFIG_SECURITY_IPE ;;
+      *)             echo "" ;;
+    esac
+  }
+  # 某符号最终是否 =y（gki_defconfig + 各 fragment；fragment 后写覆盖前者）
+  cfg_is_y() {
+    local sym="$1" f hit=1
+    for f in "$GKI_DEFCONFIG" "$COMMON"/arch/arm64/configs/*.fragment; do
+      [ -f "$f" ] || continue
+      grep -qE "^${sym}=y([[:space:]]|$)" "$f" && hit=0
+      grep -qE "^# ${sym} is not set" "$f" && hit=1
+    done
+    return $hit
+  }
+  # config LSM 有多个 default 行（部分带 "if DEFAULT_SECURITY_xxx" 条件），
+  # 这里把每个 default 行都取出来、剥掉 "if ..." 条件、拆成名字集合（去重）。
+  # 我们只关心「成员资格」（是否会被 append 进 LSM 链），顺序不影响槽位算术。
+  LSM_NAMES=$(awk '
+    /^config LSM$/ { inblk=1; next }
+    inblk && /^[^[:space:]]/ { inblk=0 }
+    inblk && /^[[:space:]]*default[[:space:]]/ {
+      line=$0
+      sub(/^[[:space:]]*default[[:space:]]*/,"",line)
+      sub(/[[:space:]]+if[[:space:]].*$/,"",line)
+      gsub(/"/,"",line)
+      gsub(/[[:space:]]/,"",line)
+      if (line != "") print line
+    }' "$SEC_KCONFIG" | tr ',' '\n' | sort -u)
+  echo "    security/Kconfig 里 CONFIG_LSM 出现过(去重) = $(echo "$LSM_NAMES" | tr '\n' ' ')"
+  COUNT=0
+  for name in $LSM_NAMES; do
+    [ -z "$name" ] && continue
+    sym=$(lsm_sym "$name")
+    if [ -z "$sym" ]; then
+      # capability 恒随 CONFIG_SECURITY 启用，单独在下面核对
+      [ "$name" = capability ] && continue
+      bad "CONFIG_LSM 含未知 LSM 名 \"$name\"（lsm_count.h 无从核对，需人工确认枚举）"
+      continue
+    fi
+    if cfg_is_y "$sym"; then
+      COUNT=$((COUNT+1))
+      if grep -q "IS_ENABLED(${sym})" "$LSMCOUNT"; then
+        ok "LSM $name ($sym=y) 已登记进 lsm_count.h"
+      else
+        bad "LSM $name ($sym=y) 未登记进 include/linux/lsm_count.h —— 会挤爆 MAX_LSM_COUNT、开机触发 'out of LSM static calls' WARNING 并静默丢弃末尾 LSM"
+      fi
+    fi
+  done
+  # capability 恒随 CONFIG_SECURITY 启用，需单独核对
+  if cfg_is_y CONFIG_SECURITY; then
+    COUNT=$((COUNT+1))
+    if grep -q 'IS_ENABLED(CONFIG_SECURITY)' "$LSMCOUNT"; then
+      ok "LSM capability (CONFIG_SECURITY=y) 已登记进 lsm_count.h"
+    else
+      bad "capability 未登记进 lsm_count.h（异常）"
+    fi
+  fi
+  echo "    启用 LSM 总数 = $COUNT（必须全部登记进 lsm_count.h，否则槽位溢出）"
+fi
+
 echo "==== 门禁A 结果 ===="
 if [ "$FAIL" -ne 0 ]; then
   echo "::error::门禁A 未通过，终止构建（避免产出一个看似成功但无 root 的包）"

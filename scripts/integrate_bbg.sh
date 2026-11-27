@@ -11,11 +11,23 @@
 #   拦截 file_permission 写、file_ioctl 的 BLKDISCARD/BLKZEROOUT 等破坏性 ioctl。
 #   只对 root 进程（su/ksu/magisk SELinux domain）生效。
 #
-# 关键决策（保证「能刷内核」）：
+# 关键决策（长期稳定维护优先）：
 #   - 不设 CONFIG_BBG_BLOCK_BOOT / CONFIG_BBG_BLOCK_RECOVERY（默认 n），
 #     使 boot/recovery 留在白名单，AnyKernel3 刷 boot 不被拦。
-#   - CONFIG_LSM 必须含 baseband_guard，否则 BBG 的 Makefile 会 $(error)。
-#   - 6.12 上 BBG 走 DEFINE_LSM 注册（新 LSM API），与 SUSFS/SELinux 叠加不冲突。
+#   - 【当前 BBG 处于关闭状态（CONFIG_BBG=n）】原因：6.12 的 LSM 静态调用槽位
+#     总数 MAX_LSM_COUNT 来自 include/linux/lsm_count.h 的写死枚举名单
+#     （capability/selinux/smack/apparmor/tomoyo/yama/loadpin/lockdown/safesetid/
+#      bpf/landlock/ima/evm/ipe），名单里没有 BBG。若把 baseband_guard 注入
+#     CONFIG_LSM，运行时会多出一个未计入的 LSM：
+#       capability→landlock→safesetid→selinux→baseband_guard(占满5/5)→bpf(第6个)
+#     被 security/security.c:221 `WARN(last_lsm == MAX_LSM_COUNT)` 拒收：
+#     bpf LSM 静默失效 + 开机 0.06s 打印 "out of LSM static calls!?" WARNING；
+#     若设备 cmdline 带 panic_on_warn=1 则进 init 前即 panic。
+#     【已由 QEMU 长测实证，见仓库文档。】
+#   - BBG 的 Makefile 在 CONFIG_BBG=y 且 CONFIG_LSM 无 baseband_guard 时 $(error)，
+#     因此必须整体 =n，而不是「编译但挂不进 LSM」。
+#   - 恢复启用 = 两个前置：①解决 lsm_count.h 枚举（改上游，需单独立项决策）；
+#     ②恢复本脚本第 6 步的 CONFIG_LSM 注入。
 set -euo pipefail
 
 ROOT="${1:-}"
@@ -108,23 +120,34 @@ else
   echo "==> security/Kconfig 已插入 source \"security/baseband-guard/Kconfig\""
 fi
 
-# ============ 6) CONFIG_LSM 注入 baseband_guard ============
-# 把 security/Kconfig 里 config LSM 块的 default 值中的 selinux 改为 selinux,baseband_guard
-# （BBG 的 Makefile 会在 CONFIG_BBG=y 但 CONFIG_LSM 无 baseband_guard 时 $(error)）
-sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' "$SEC_KCONFIG"
-grep -q 'selinux,baseband_guard' "$SEC_KCONFIG" \
-  && echo "==> CONFIG_LSM default 已含 baseband_guard" \
-  || { echo "::error::CONFIG_LSM 注入 baseband_guard 失败"; exit 1; }
+# ============ 6) CONFIG_LSM：刻意不注入 baseband_guard（见头部说明）============
+# 若树里残留旧集成注入的 baseband_guard，这里主动移除，保证幂等。
+sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { s/selinux,baseband_guard/selinux/ } }' "$SEC_KCONFIG"
+if grep -q 'baseband_guard' "$SEC_KCONFIG"; then
+  echo "::error::security/Kconfig 的 CONFIG_LSM 仍含 baseband_guard（会挤爆 LSM 槽位，必须移除）"; exit 1
+fi
+echo "==> CONFIG_LSM 保持原厂值（不含 baseband_guard，BBG 不占槽位）"
 
 # ============ 7) 生成 bbg.fragment ============
 cat > "$FRAGMENT" <<'EOF'
 # Baseband-guard defconfig fragment —— 通过 common_kernel 的
 # post_defconfig_fragments 注入，不直接改 gki_defconfig（Kleaf minimized 校验要求本体干净）。
-CONFIG_BBG=y
-# 注意：不设 CONFIG_BBG_BLOCK_BOOT / CONFIG_BBG_BLOCK_RECOVERY（默认 n），
-# 以保持 boot/recovery 在白名单、AnyKernel3 刷 boot 不被拦截。
+#
+# 【当前状态：BBG 关闭】
+#   BBG 的 Kconfig 是 default y，不显式写 "is not set" 会被自动启用；
+#   而启用后会挤爆 LSM 静态调用槽位（baseband_guard 未登记进
+#   include/linux/lsm_count.h 的 MAX_LSM_COUNT 枚举），后果：
+#   bpf LSM 被静默丢弃 + 开机 0.06s "out of LSM static calls!?" WARNING
+#   （若 cmdline 带 panic_on_warn=1 则进 init 前即 panic）。QEMU 长测已实证。
+#
+#   恢复启用的完整前置（缺一不可）：
+#   1) 解决 include/linux/lsm_count.h 枚举问题（改上游文件，需单独立项决策）；
+#   2) 本行改为 CONFIG_BBG=y；
+#   3) 恢复 integrate_bbg.sh 第 6 步的 CONFIG_LSM 注入；
+#   4) 过 QEMU 冒烟：内核日志须打印 lsm=...,baseband_guard 且无 LSM 相关 WARNING。
+# CONFIG_BBG is not set
 EOF
-echo "==> 已生成 fragment: $FRAGMENT"
+echo "==> 已生成 fragment: $FRAGMENT（CONFIG_BBG 显式关闭）"
 
 # ============ 8) BUILD.bazel 追加 bbg.fragment 到 post_defconfig_fragments ============
 if grep -q 'arch/arm64/configs/bbg.fragment' "$BUILD_BAZEL"; then
@@ -163,8 +186,17 @@ echo "==> 自检"
 test -f "$BBG_DIR/baseband_guard.c" && echo "  ✓ baseband_guard.c 存在" || { echo "  ✗ baseband_guard.c 缺失"; exit 1; }
 grep -q 'baseband-guard/' "$SEC_MAKEFILE" && echo "  ✓ security/Makefile 有 baseband-guard 条目" || { echo "  ✗ Makefile 缺条目"; exit 1; }
 grep -q 'security/baseband-guard/Kconfig' "$SEC_KCONFIG" && echo "  ✓ security/Kconfig 有 source" || { echo "  ✗ Kconfig 缺 source"; exit 1; }
-grep -q 'selinux,baseband_guard' "$SEC_KCONFIG" && echo "  ✓ CONFIG_LSM 含 baseband_guard" || { echo "  ✗ CONFIG_LSM 缺 baseband_guard"; exit 1; }
+if grep -q 'baseband_guard' "$SEC_KCONFIG"; then
+  echo "  ✗ security/Kconfig 的 CONFIG_LSM 仍含 baseband_guard（会挤爆 LSM 槽位）"; exit 1
+else
+  echo "  ✓ CONFIG_LSM 不含 baseband_guard（不挤槽位）"
+fi
 test -f "$FRAGMENT" && echo "  ✓ bbg.fragment 存在" || { echo "  ✗ bbg.fragment 缺失"; exit 1; }
+if grep -q 'CONFIG_BBG is not set' "$FRAGMENT"; then
+  echo "  ✓ bbg.fragment 显式关闭 CONFIG_BBG（Kconfig default y 不会自动启用）"
+else
+  echo "  ✗ bbg.fragment 未显式关闭 CONFIG_BBG（BBG Kconfig 是 default y，会被自动启用）"; exit 1
+fi
 grep -q 'bbg.fragment' "$BUILD_BAZEL" && echo "  ✓ BUILD.bazel 已引用 bbg.fragment" || { echo "  ✗ BUILD.bazel 缺 bbg.fragment 引用"; exit 1; }
 grep -q '^CONFIG_BBG' "${COMMON}/arch/arm64/configs/gki_defconfig" && { echo "  ✗ gki_defconfig 被污染（含 CONFIG_BBG），不允许"; exit 1; } || echo "  ✓ gki_defconfig 本体干净（无 CONFIG_BBG）"
 echo "==> Baseband-guard 集成完成（$BBG_REF，防格机 LSM）"
