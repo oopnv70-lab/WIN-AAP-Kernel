@@ -72,23 +72,12 @@ jobs:
           sudo apt-get clean
           df -h /
 
-      - name: 安装构建依赖
+      - name: 安装依赖（仅源码准备所需，不装编译器）
         run: |
           set -euxo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            git-core gnupg flex bison build-essential zip unzip curl zlib1g-dev \
-            libc6-dev libncurses-dev libssl-dev libelf-dev bc cpio rsync \
-            python3 python3-pip dwarves lz4 device-tree-compiler ccache \
-            file libarchive-tools libxml2-utils aria2
-
-      - name: 安装 repo 同步工具
-        run: |
-          set -euxo pipefail
-          mkdir -p ~/bin
-          curl -fsSL https://raw.githubusercontent.com/GerritCodeReview/git-repo/main/repo -o ~/bin/repo
-          chmod +x ~/bin/repo
-          echo "$HOME/bin" >> "$GITHUB_PATH"
+            git-core curl unzip rsync python3 aria2 patch xz-utils file
 
       - name: 拉取荣耀开源代码 (动态查询有效链接)
         run: |
@@ -103,68 +92,12 @@ jobs:
           chmod +x scripts/audit_licenses.sh
           ./scripts/audit_licenses.sh "${GITHUB_WORKSPACE}/honor_src/Code_Opensource" | tee "${GITHUB_WORKSPACE}/license-audit.log"
 
-      - name: 同步 AOSP 内核基础工程
-        run: |
-          set -euxo pipefail
-          mkdir -p "$KERNEL_PLATFORM" && cd "$KERNEL_PLATFORM"
-          git config --global user.name  "github-actions"
-          git config --global user.email "github-actions@github.com"
-          repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1 --no-repo-verify
-          # 采样：区分「CPU 打满」「等磁盘 IO」「等网络」三种瓶颈
-          # cpu  = 用户+系统 CPU 占比
-          # iow  = iowait 占比（高 → 瓶颈在磁盘，加并发无用）
-          # run  = /proc/stat 里 procs_running（真实并发进程数）
-          # load = 1 分钟平均负载
-          (
-            # 关闭 xtrace：否则 `+ echo 't=..s cpu=..% ..'` 这类追迹行会被一起写进采样文件，
-            # 其中含 "cpu="，awk 会把它当样本、$4 取到 "533s" 被数值化成 533 累加进 cpu，
-            # 导致 avg 被拉爆（历史日志出现过 avg_cpu=140% > max_cpu=98% 的自相矛盾）。
-            { set +x; } 2>/dev/null
-            while :; do
-              read -r C IOW RUN < <(awk '
-                /^cpu /{u=$2+$4; t=$2+$3+$4+$5+$6+$7+$8; if(t>0) c=u*100/t; iw=$6*100/t}
-                /^procs_running/{r=$2}
-                END{printf "%.0f %.0f %d\n", c, iw, r}' /proc/stat)
-              L=$(cut -d" " -f1 /proc/loadavg)
-              echo "t=${SECONDS}s cpu=${C}% iowait=${IOW}% run=${RUN} load1=${L}"
-              sleep 5
-            done
-          ) > "$GITHUB_WORKSPACE/sync-monitor.log" 2>&1 &
-          MON=$!
-          T0=$(date +%s)
-          # 并发实测（同一 runner）：-j4=453s、-j12=396s（最优）、-j16=538s。
-          # 4 核机上 16 路并发会在 index-pack 解包阶段把 CPU 打满（实测 max_cpu=98%），
-          # 解包跟不上导致读管道背压、TCP 窗口收缩，吞吐反而从 72MB/s 掉到 53MB/s。
-          # 故固定在 -j12，不要再往上加。
-          repo sync -c --no-tags --optimized-fetch -j12 --force-sync || { kill $MON 2>/dev/null || true; echo "::error::repo sync 失败"; exit 1; }
-          T1=$(date +%s)
-          kill $MON 2>/dev/null || true
-          wait $MON 2>/dev/null || true
-          echo "=== repo sync 耗时 $((T1-T0))s ==="
-          echo "--- 采样汇总（判定瓶颈用）---"
-          # 字段布局: $1=t $2=<n>s $3=cpu $4=<n> $5=iowait $6=<n> $7=run $8=<n> $9=load1 $10=<x>
-          awk -F'[= %]+' '/cpu=/{c+=$4; i+=$6; r+=$8; n++; if($4>mc)mc=$4; if($6>mi)mi=$6; if($8>mr)mr=$8}
-            END{if(n>0) printf "avg_cpu=%.0f%% max_cpu=%.0f%% | avg_iowait=%.0f%% max_iowait=%.0f%% | avg_run=%.1f max_run=%d | samples=%d\n", c/n,mc,i/n,mi,r/n,mr,n}' \
-            "$GITHUB_WORKSPACE/sync-monitor.log" || true
-          echo "--- 采样尾部 20 行 ---"
-          tail -20 "$GITHUB_WORKSPACE/sync-monitor.log"
-          echo "--- 并发度解读 ---"
-          echo "nproc=$(nproc)  并发参数=-j12"
-          echo "若 avg_run 远小于 12 且 avg_iowait 高 → 瓶颈在磁盘/网络，加并发无效"
-          echo "若 avg_cpu 接近 nproc*100 → CPU 打满，加并发反而更差"
-          # 实测同步总量：用于计算真实平均速率（GB/s），是判断「网络慢还是数据多」的唯一硬依据
-          echo "=== 同步后体积（du -sh）==="
-          du -sh "$KERNEL_PLATFORM" || true
-          echo "=== 分项体积（前 10 大）==="
-          du -sh "$KERNEL_PLATFORM"/* 2>/dev/null | sort -rh | head -10 || true
-          echo "=== 磁盘 ==="
-          df -h /
-
       - name: 覆盖荣耀内核源码
         run: |
           set -euxo pipefail
           SRC="${GITHUB_WORKSPACE}/honor_src/Code_Opensource"
           test -d "${SRC}/kernel" || { echo "::error::找不到荣耀 kernel 目录"; exit 1; }
+          mkdir -p "${KERNEL_PLATFORM}/common"
           rsync -a --delete --exclude='.git' "${SRC}/kernel/" "${KERNEL_PLATFORM}/common/"
           echo "=== 覆盖后内核版本 ==="
           grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' "${KERNEL_PLATFORM}/common/Makefile"
