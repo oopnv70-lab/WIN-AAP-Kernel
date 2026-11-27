@@ -45,16 +45,15 @@ test -f "$BUILD_BAZEL" || { echo "::error::找不到 common/BUILD.bazel ($BUILD_
 if [ ! -d "$BBG_DIR/.git" ]; then
   echo "==> clone Baseband-guard ($BBG_REF)"
   rm -rf "$BBG_DIR"
-  if echo "$BBG_REF" | grep -qE '^[0-9a-f]{40}$'; then
-    # 裸 commit sha：git clone -b 不接受 sha，直接浅克隆 + fetch + checkout
-    echo "==> ref 为 commit sha，走浅克隆 + fetch + checkout"
-    git clone --depth 1 "$BBG_REPO" "$BBG_DIR"
-    git -C "$BBG_DIR" fetch --depth 1 origin "$BBG_REF"
-    git -C "$BBG_DIR" checkout "$BBG_REF"
-  else
-    echo "==> ref 为分支/tag，直接 -b 克隆"
-    git clone --depth 1 -b "$BBG_REF" "$BBG_REPO" "$BBG_DIR"
-  fi
+  # git clone -b 只接受分支/tag，对裸 commit sha 必然失败（BBG_REF 恒为 sha）。
+  # 只保留一条经过实测验证的正确路径：浅克隆 + fetch 指定 sha + checkout。
+  git clone --depth 1 "$BBG_REPO" "$BBG_DIR"
+  git -C "$BBG_DIR" fetch --depth 1 origin "$BBG_REF"
+  git -C "$BBG_DIR" checkout "$BBG_REF"
+  # 锁定校验：checkout 后 HEAD 必须等于目标 sha
+  HEAD_SHA=$(git -C "$BBG_DIR" rev-parse HEAD)
+  [ "$HEAD_SHA" = "$BBG_REF" ] \
+    || { echo "::error::Baseband-guard checkout 后 HEAD ($HEAD_SHA) != 目标 ($BBG_REF)"; exit 1; }
 else
   echo "==> Baseband-guard 已存在，跳过 clone"
 fi
